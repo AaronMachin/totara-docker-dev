@@ -94,6 +94,47 @@ class s3_storage implements storage {
         return $res['body'];
     }
 
+    public function upload($localPath, $prefix) {
+        $uploaded = array();
+        if (!file_exists($localPath)) {
+            throw new InvalidArgumentException('Path does not exist: ' . $localPath);
+        }
+        $localPath = rtrim($localPath, '/');
+        $prefix = trim($prefix, '/');
+        if (is_file($localPath)) {
+            $basename = basename($localPath);
+            $key = ($prefix !== '' ? $prefix . '/' : '') . $basename;
+            $this->request('PUT', $key, array(
+                'headers' => array(
+                    'Content-Type' => $this->guessMimeType($localPath),
+                    'Content-Length' => filesize($localPath),
+                ),
+                'body' => file_get_contents($localPath),
+            ));
+            $uploaded[] = $key;
+            return $uploaded;
+        }
+        // Directory traversal
+        $baseLen = strlen($localPath) + 1; // include trailing slash for relative
+        $rii = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($localPath, FilesystemIterator::SKIP_DOTS));
+        foreach ($rii as $fileInfo) {
+            if ($fileInfo->isDir()) { continue; }
+            $rel = substr($fileInfo->getPathname(), $baseLen);
+            $key = ($prefix !== '' ? $prefix . '/' : '') . str_replace('\\', '/', $rel);
+            $body = file_get_contents($fileInfo->getPathname());
+            $this->request('PUT', $key, array(
+                'headers' => array(
+                    'Content-Type' => $this->guessMimeType($fileInfo->getPathname()),
+                    'Content-Length' => strlen($body),
+                ),
+                'body' => $body,
+            ));
+            $uploaded[] = $key;
+            if ($this->debug) { fwrite(STDERR, "[tsnap-debug] Uploaded $key\n"); }
+        }
+        return $uploaded;
+    }
+
     private function guessMimeType($path) {
         if (function_exists('finfo_open')) {
             $finfo = finfo_open(FILEINFO_MIME_TYPE);

@@ -11,15 +11,21 @@ Usage:
   tsnap list [--prefix=STR] [--limit=N]
   tsnap get <key> [--output=/path/file]
   tsnap cat <key>
+  tsnap snap [--type=sql] [-m "message"]
+  tsnap publish --snap=UID
   tsnap help
 
 Environment (or pass via exported variables):
-  SNAPPY_S3_ENDPOINT, SNAPPY_S3_REGION, SNAPPY_S3_BUCKET, SNAPPY_S3_KEY, SNAPPY_S3_SECRET, SNAPPY_S3_PATH_STYLE
+  SNAPPY_S3_ENDPOINT, SNAPPY_S3_REGION, SNAPPY_S3_BUCKET, SNAPPY_S3_KEY, SNAPPY_S3_SECRET
+  NORMAL_BACKUP_LOCATION (defaults to $HOME/.tsnap/snaps)
+  TDB_BACKUP_PATH (tdb backup location; default from tdb if unset)
 
 Examples:
   tsnap list --prefix=backups/ --limit=20
   tsnap get backups/site1.sql.gz --output=./site1.sql.gz
   tsnap cat notes/readme.txt
+  tsnap snap --type=sql -m "Backup before upgrade"
+  tsnap publish --snap=20250925-123000-ab12cd34
 USAGE
   exit 0
 fi

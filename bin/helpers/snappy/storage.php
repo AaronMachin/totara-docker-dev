@@ -31,4 +31,14 @@ interface storage {
      * @return string
      */
     public function read_object($key);
+
+    /**
+     * Upload a file or directory recursively to the storage under the given prefix.
+     * If $localPath is a file, it will be stored at "$prefix/basename" unless basename already included.
+     * Returns array of uploaded keys.
+     * @param string $localPath
+     * @param string $prefix Target key prefix (no leading slash)
+     * @return array
+     */
+    public function upload($localPath, $prefix);
 }
