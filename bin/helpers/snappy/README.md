@@ -17,7 +17,7 @@ Key Principles
 1. Familiar mental model: snap -> push / pull (like commit -> push / pull).
 2. Zero external PHP dependencies (pure PHP + curl).
 3. Deterministic, inspectable on‑disk layout.
-4. Clear, minimal command surface; no hidden state beyond remotes.json + snapshot files.
+4. Clear, minimal command surface; only persistent state is config.json + snapshot files.
 5. Extensible storage & snapshot types without large refactors.
 
 Directory Layout
@@ -33,15 +33,15 @@ bin/helpers/snappy/
       snap.php               (create snapshot)
       push.php               (push snapshot to remote)
       pull.php               (pull snapshot from remote)
-      list.php / listing.php (list snapshots on a remote or all)
-      remote.php             (manage remotes)
+      listing.php            (list snapshots on a remote or all)
+      remote.php             (manage remotes & reload config)
       cat.php                (dump object contents)
       get.php                (download single object)
       fetch.php              (compat stub: forces a list scan on a remote)
       help.php               (dynamic help)
     snapshot/
       snapshot_manager.php   (create, list, push, pull, resolve)
-      remote_registry.php    (multi‑remote registry + remotes.json persistence)
+      remote_registry.php    (multi‑remote registry + config.json persistence)
     storage/
       storage.php            (storage interface)
       local_storage.php      (filesystem implementation)
@@ -55,12 +55,12 @@ bin/helpers/snappy/
 
 Local Snapshot Layout
 ---------------------
-Local snapshots now live under a unified base directory (no sharding):
+Local snapshots live under a unified base directory:
 ```
 $SNAPPY_SNAPSHOT_ROOT/snaps/<uid>/meta.json
 $SNAPPY_SNAPSHOT_ROOT/snaps/<uid>/backup.sql   (type=sql)
 ```
-Default base path: $HOME/.snappy (so snapshots in $HOME/.snappy/snaps/...)
+Default base path: $HOME/.snappy
 
 Remote Layout
 -------------
@@ -69,20 +69,27 @@ snaps/<uid>/meta.json
 snaps/<uid>/<files...>
 ```
 
-Remote Registry State
----------------------
+Configuration File
+------------------
+Primary config state (remotes + options) stored at:
 ```
-$SNAPPY_SNAPSHOT_ROOT/.snappy/remotes.json
+$SNAPPY_SNAPSHOT_ROOT/.snappy/config.json
 ```
-Example remotes.json snippet:
+Example config.json snippet:
 ```
 {
+  "version": 1,
   "remotes": {
     "local": {"type":"local","path":"/home/user/.snappy","created":"..."},
     "origin": {"type":"s3","config":{"endpoint":"https://s3.example","bucket":"mybucket","region":"us-east-1","key":"...","secret":"..."},"created":"..."}
   },
+  "options": {"default_remote": "local"},
   "updated": "..."
 }
+```
+Edit config.json manually then run:
+```
+snappy remote reload
 ```
 
 Environment Variables
@@ -90,24 +97,22 @@ Environment Variables
 (Only needed if not supplied when adding a remote.)
 - SNAPPY_SNAPSHOT_ROOT   Base path (default: $HOME/.snappy)
 - SNAPPY_TDB_BACKUP_PATH Path where `tdb backup <uid>` writes dumps (default: $HOME/tdb_backups)
-- SNAPPY_DEBUG           1/true enables verbose S3 logging (applies if debug passed via config)
-
-S3 remote configuration is stored per added remote (endpoint, bucket, region, key, secret, optional path_style).
+- SNAPPY_DEBUG           1/true enables verbose S3 logging
 
 Commands
 --------
 - snap        Create a local snapshot (currently type=sql)
-- push        Push snapshot (by full UID or unique prefix) to a remote: push <uid|prefix> [remote]
+- push        Push snapshot (full UID or unique prefix) to a remote: push <uid|prefix> [remote]
 - pull        Pull snapshot from a remote into local: pull <uid|prefix> <remote> [--force]
 - list        List snapshots (default local). Options: --remote=<name> --all --limit=N --full
-- remote      Manage remotes (add/list/remove)
+- remote      Manage remotes: add/list/remove/reload
 - cat         Output raw object from a remote (--remote=, default local)
 - get         Download remote object to file (--remote=, --output=)
 - fetch       Force listing scan (legacy convenience; returns count)
 - help        Display dynamic command help
 
-Remote Management
------------------
+Remote Management Examples
+--------------------------
 Add an S3 remote:
 ```
 snappy remote add origin s3 \
@@ -118,9 +123,10 @@ snappy remote add origin s3 \
   --secret=SECRET \
   --path-style
 ```
-List remotes:
+Manual edit + reload:
 ```
-snappy remote list
+vi $SNAPPY_SNAPSHOT_ROOT/.snappy/config.json
+snappy remote reload
 ```
 Remove remote:
 ```
@@ -132,7 +138,7 @@ Typical Workflow
 ```
 snappy snap -m "before upgrade"
 snappy push <uid-prefix> origin
-# On another machine	snappy pull <uid-prefix> origin
+snappy pull <uid-prefix> origin
 ```
 
 Meta Format (meta.json)
@@ -172,7 +178,7 @@ Short term:
 
 Medium term:
 - Parallel uploads (multipart)
-- Additional storage backends (e.g. Azure Blob, GCS)
+- Additional storage backends (Azure Blob, GCS)
 
 Long term:
 - Incremental / differential snapshots

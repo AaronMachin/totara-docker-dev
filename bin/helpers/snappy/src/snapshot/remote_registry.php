@@ -13,9 +13,11 @@ use RuntimeException;
 class remote_registry {
     private string $base_path;       // base working directory for local snapshots
     private string $config_dir;      // directory to store config
-    private string $config_file;     // remotes.json path
+    private string $config_file;     // config.json path (remotes + future options)
     private array $remotes = [];
+    private array $options = [];
     private array $storage_cache = [];
+    private int $config_version = 1;
 
     public function __construct(string $base_path) {
         $trim = rtrim($base_path, '/');
@@ -27,24 +29,39 @@ class remote_registry {
         if (!is_dir($this->config_dir)) {
             @mkdir($this->config_dir, 0777, true);
         }
-        $this->config_file = $this->config_dir . '/remotes.json';
+        $this->config_file = $this->config_dir . '/config.json';
         $this->load();
         $this->ensure_local();
     }
 
     private function load(): void {
+        $this->remotes = [];
+        $this->options = [];
         if (is_file($this->config_file)) {
             $data = @json_decode(@file_get_contents($this->config_file), true);
-            if (is_array($data) && isset($data['remotes']) && is_array($data['remotes'])) {
-                $this->remotes = $data['remotes'];
+            if (is_array($data)) {
+                $this->config_version = (int)($data['version'] ?? 1);
+                if (isset($data['remotes']) && is_array($data['remotes'])) {
+                    $this->remotes = $data['remotes'];
+                }
+                if (isset($data['options']) && is_array($data['options'])) {
+                    $this->options = $data['options'];
+                }
             }
         }
     }
 
     private function persist(): void {
-        $data = [ 'remotes' => $this->remotes, 'updated' => date('c') ];
+        $data = [
+            'version' => $this->config_version,
+            'remotes' => $this->remotes,
+            'options' => $this->options,
+            'updated' => date('c'),
+        ];
         @file_put_contents($this->config_file, json_encode($data, JSON_PRETTY_PRINT));
     }
+
+    public function reload(): void { $this->load(); }
 
     private function ensure_local(): void {
         if (!isset($this->remotes['local'])) {
@@ -53,9 +70,16 @@ class remote_registry {
                 'path' => $this->base_path,
                 'created' => date('c'),
             ];
+            if (!isset($this->options['default_remote'])) {
+                $this->options['default_remote'] = 'local';
+            }
             $this->persist();
         }
     }
+
+    public function options(): array { return $this->options; }
+    public function get_option(string $key, $default = null) { return $this->options[$key] ?? $default; }
+    public function set_option(string $key, $value): void { $this->options[$key] = $value; $this->persist(); }
 
     public function list(): array { return $this->remotes; }
 

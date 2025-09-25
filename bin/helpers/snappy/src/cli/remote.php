@@ -20,6 +20,8 @@ class remote implements command {
             return $this->add($args, $ctx);
         } elseif ($sub === 'remove' || $sub === 'rm') {
             return $this->remove($args, $ctx);
+        } elseif ($sub === 'reload') {
+            return $this->reload($ctx);
         } else {
             fwrite(STDERR, "unknown remote subcommand: $sub\n");
             $this->usage();
@@ -32,6 +34,7 @@ class remote implements command {
         echo "  snappy remote list\n";
         echo "  snappy remote add <name> s3 --endpoint=URL --bucket=NAME --region=REGION --key=KEY --secret=SECRET [--path-style]\n";
         echo "  snappy remote remove <name>\n";
+        echo "  snappy remote reload   # reload config.json after manual edit\n";
     }
 
     private function list(context $ctx): int {
@@ -100,5 +103,10 @@ class remote implements command {
         echo "removed remote $name\n";
         return 0;
     }
-}
 
+    private function reload(context $ctx): int {
+        $ctx->registry->reload();
+        echo "reloaded config.json\n";
+        return 0;
+    }
+}
