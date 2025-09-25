@@ -18,6 +18,8 @@ class s3_storage implements storage {
     /** @var string */ private $key;
     /** @var string */ private $secret;
     /** @var bool */ private $debug;
+    /** @var bool */ private $pathStyle;
+    /** @var bool */ private $autoPathStyle;
 
     public function __construct($config = array()) {
         if (!is_array($config)) { $config = array(); }
@@ -27,6 +29,16 @@ class s3_storage implements storage {
         $this->key      = isset($config['key']) ? $config['key'] : (getenv('SNAPPY_S3_KEY') ?: '');
         $this->secret   = $config['secret'] ?? (getenv('SNAPPY_S3_SECRET') ?: '');
         $this->debug = (isset($config['debug']) && $config['debug']) || getenv('TSNAP_DEBUG');
+        $host = parse_url($this->endpoint, PHP_URL_HOST);
+        $force = getenv('SNAPPY_S3_PATH_STYLE');
+        $this->pathStyle = ($force === '1' || $force === 'true');
+        // Auto-enable path style for localhost/IP endpoints unless explicitly disabled
+        $this->autoPathStyle = false;
+        if (!$this->pathStyle) {
+            if ($host === 'localhost' || filter_var($host, FILTER_VALIDATE_IP)) {
+                $this->autoPathStyle = true;
+            }
+        }
         $missing = array();
         if (!$this->endpoint) { $missing[] = 'SNAPPY_S3_ENDPOINT (e.g. https://s3.amazonaws.com or http://localhost:8000)'; }
         if (!$this->bucket)   { $missing[] = 'SNAPPY_S3_BUCKET'; }
@@ -42,16 +54,8 @@ class s3_storage implements storage {
         if (!is_readable($filepath)) {
             throw new InvalidArgumentException('File not readable: ' . $filepath);
         }
-        $body = file_get_contents($filepath);
-        $key = $hash; // Could add prefixing logic later.
-        $this->request('PUT', $key, array(
-            'headers' => array(
-                'Content-Type' => $this->guessMimeType($filepath),
-                'Content-Length' => strlen($body),
-            ),
-            'body' => $body,
-        ));
-        return $key;
+        // Use streaming path to avoid loading whole file
+        return $this->stream_put($hash, $filepath);
     }
 
     public function list_objects($prefix = '', $max = 100) {
@@ -104,31 +108,17 @@ class s3_storage implements storage {
         if (is_file($localPath)) {
             $basename = basename($localPath);
             $key = ($prefix !== '' ? $prefix . '/' : '') . $basename;
-            $this->request('PUT', $key, array(
-                'headers' => array(
-                    'Content-Type' => $this->guessMimeType($localPath),
-                    'Content-Length' => filesize($localPath),
-                ),
-                'body' => file_get_contents($localPath),
-            ));
+            $this->stream_put($key, $localPath);
             $uploaded[] = $key;
             return $uploaded;
         }
-        // Directory traversal
-        $baseLen = strlen($localPath) + 1; // include trailing slash for relative
+        $baseLen = strlen($localPath) + 1;
         $rii = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($localPath, FilesystemIterator::SKIP_DOTS));
         foreach ($rii as $fileInfo) {
             if ($fileInfo->isDir()) { continue; }
             $rel = substr($fileInfo->getPathname(), $baseLen);
             $key = ($prefix !== '' ? $prefix . '/' : '') . str_replace('\\', '/', $rel);
-            $body = file_get_contents($fileInfo->getPathname());
-            $this->request('PUT', $key, array(
-                'headers' => array(
-                    'Content-Type' => $this->guessMimeType($fileInfo->getPathname()),
-                    'Content-Length' => strlen($body),
-                ),
-                'body' => $body,
-            ));
+            $this->stream_put($key, $fileInfo->getPathname());
             $uploaded[] = $key;
             if ($this->debug) { fwrite(STDERR, "[tsnap-debug] Uploaded $key\n"); }
         }
@@ -147,6 +137,23 @@ class s3_storage implements storage {
         return 'application/octet-stream';
     }
 
+    private function buildHostAndUri($key) {
+        $endpointHost = parse_url($this->endpoint, PHP_URL_HOST);
+        $port = parse_url($this->endpoint, PHP_URL_PORT);
+        $scheme = parse_url($this->endpoint, PHP_URL_SCHEME);
+        $usePath = $this->pathStyle || $this->autoPathStyle;
+        if ($usePath) {
+            $host = $endpointHost . ($port?":$port":"");
+            $uri = '/' . $this->bucket . '/' . ltrim($key,'/');
+            if ($key==='') { $uri = '/' . $this->bucket . '/'; }
+        } else {
+            $host = $this->bucket . '.' . $endpointHost . ($port?":$port":"");
+            $uri = '/' . ltrim($key,'/');
+            if ($key==='') { $uri = '/'; }
+        }
+        return array($scheme, $host, $uri);
+    }
+
     /**
      * Perform a signed S3 request.
      * @param string $method
@@ -160,15 +167,10 @@ class s3_storage implements storage {
         $body = isset($options['body']) ? $options['body'] : '';
         $query = isset($options['query']) ? $options['query'] : '';
         $service = 's3';
-        $endpointHost = parse_url($this->endpoint, PHP_URL_HOST);
-        $port = parse_url($this->endpoint, PHP_URL_PORT);
-        $scheme = parse_url($this->endpoint, PHP_URL_SCHEME);
-        $host = $this->bucket . '.' . $endpointHost; // virtual-hosted style only
-        $canonicalUri = '/' . ltrim($key, '/');
-        if ($key === '') { $canonicalUri = '/'; }
+        list($scheme,$host,$canonicalUri) = $this->buildHostAndUri($key);
         $amzDate = gmdate('Ymd\THis\Z');
         $dateStamp = gmdate('Ymd');
-        $headers['Host'] = $host . ($port ? ':' . $port : '');
+        $headers['Host'] = $host;
         $headers['x-amz-content-sha256'] = hash('sha256', $body);
         $headers['x-amz-date'] = $amzDate;
 
@@ -204,7 +206,7 @@ class s3_storage implements storage {
         $authorization = $algorithm . ' Credential=' . $this->key . '/' . $credentialScope . ', SignedHeaders=' . $signedHeaders . ', Signature=' . $signature;
         $headers['Authorization'] = $authorization;
 
-        $url = $scheme . '://' . $host . ($port ? ':' . $port : '') . $canonicalUri;
+        $url = $scheme . '://' . $host . $canonicalUri;
         if ($canonicalQuerystring !== '') { $url .= '?' . $canonicalQuerystring; }
         $headerLines = array();
         foreach ($headers as $k => $v) { $headerLines[] = $k . ': ' . $v; }
@@ -258,5 +260,68 @@ class s3_storage implements storage {
             $pairs[] = rawurlencode($k) . '=' . rawurlencode($v);
         }
         return implode('&', $pairs);
+    }
+
+    private function stream_put($key, $filepath) {
+        $size = filesize($filepath);
+        $payloadHash = hash_file('sha256', $filepath);
+        $contentType = $this->guessMimeType($filepath);
+        $service = 's3';
+        list($scheme,$host,$canonicalUri) = $this->buildHostAndUri($key);
+        $amzDate = gmdate('Ymd\THis\Z');
+        $dateStamp = gmdate('Ymd');
+        $headers = array(
+            'Host' => $host,
+            'x-amz-content-sha256' => $payloadHash,
+            'x-amz-date' => $amzDate,
+            'Content-Type' => $contentType,
+            'Content-Length' => $size,
+        );
+        ksort($headers, SORT_STRING | SORT_FLAG_CASE);
+        $canonicalHeaders = '';
+        $signedHeadersArr = array();
+        foreach ($headers as $h => $v) {
+            $hLower = strtolower($h);
+            $canonicalHeaders .= $hLower . ':' . trim($v) . "\n";
+            $signedHeadersArr[] = $hLower;
+        }
+        sort($signedHeadersArr);
+        $signedHeaders = implode(';', $signedHeadersArr);
+        $canonicalRequest = 'PUT' . "\n" . $canonicalUri . "\n\n" . $canonicalHeaders . "\n" . $signedHeaders . "\n" . $payloadHash;
+        $algorithm = 'AWS4-HMAC-SHA256';
+        $credentialScope = $dateStamp . '/' . $this->region . '/' . $service . '/aws4_request';
+        $stringToSign = $algorithm . "\n" . $amzDate . "\n" . $credentialScope . "\n" . hash('sha256', $canonicalRequest);
+        $signingKey = $this->getSignatureKey($this->secret, $dateStamp, $this->region, $service);
+        $signature = hash_hmac('sha256', $stringToSign, $signingKey);
+        $headers['Authorization'] = $algorithm . ' Credential=' . $this->key . '/' . $credentialScope . ', SignedHeaders=' . $signedHeaders . ', Signature=' . $signature;
+        $url = $scheme . '://' . $host . $canonicalUri;
+        $headerLines = array();
+        foreach ($headers as $k => $v) { $headerLines[] = $k . ': ' . $v; }
+        $fh = fopen($filepath, 'rb');
+        if (!$fh) { throw new RuntimeException('Unable to open file for reading: ' . $filepath); }
+        $ch = curl_init($url);
+        curl_setopt($ch, CURLOPT_PUT, true);
+        curl_setopt($ch, CURLOPT_INFILE, $fh);
+        curl_setopt($ch, CURLOPT_INFILESIZE, $size);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, $headerLines);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_FAILONERROR, false);
+        $responseBody = curl_exec($ch);
+        $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        if ($responseBody === false) {
+            $err = curl_error($ch);
+            fclose($fh);
+            curl_close($ch);
+            throw new RuntimeException('cURL error: ' . $err);
+        }
+        fclose($fh);
+        curl_close($ch);
+        if ($this->debug) {
+            fwrite(STDERR, "[tsnap-debug] Stream PUT $key status=$status size=$size\n");
+        }
+        if ($status >= 400) {
+            throw new RuntimeException('S3 stream upload failed (' . $status . '): ' . $responseBody);
+        }
+        return $key;
     }
 }
