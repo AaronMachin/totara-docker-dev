@@ -39,10 +39,12 @@ class help implements command {
         }
         echo "\nUsage examples:\n";
         echo "  snappy snap -m 'before upgrade'\n";
-        echo "  snappy publish a1b2c3\n";
-        echo "  snappy list --full-message --limit=20\n";
-        echo "  snappy fetch --prefix=snaps/ --limit=200\n";
+        echo "  snappy push a1b2c3 origin\n";
+        echo "  snappy pull a1b2c3 origin\n";
+        echo "  snappy list --full --remote=origin --limit=20\n";
+        echo "  snappy remote list\n";
+        echo "  snappy remote add origin s3 --endpoint=https://s3.example --bucket=mybucket --region=us-east-1 --key=AKIA... --secret=...\n";
+        echo "  snappy remote remove origin\n";
         echo "\nSet SNAPPY_SNAPSHOT_ROOT to change local snapshot root.\n";
     }
 }
-

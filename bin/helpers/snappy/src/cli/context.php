@@ -1,21 +1,15 @@
 <?php
 namespace Snappy\Cli;
 
-use Snappy\Storage\s3_storage;
-use Snappy\Snapshot\remote_cache;
 use Snappy\Snapshot\snapshot_manager;
+use Snappy\Snapshot\remote_registry;
 
 class context {
-    public s3_storage $storage;
-    public remote_cache $cache;
+    public remote_registry $registry;
     public snapshot_manager $manager;
-    public string $root_dir;
 
-    public function __construct(s3_storage $storage, remote_cache $cache, snapshot_manager $manager, string $root_dir) {
-        $this->storage = $storage;
-        $this->cache = $cache;
+    public function __construct(remote_registry $registry, snapshot_manager $manager) {
+        $this->registry = $registry;
         $this->manager = $manager;
-        $this->root_dir = $root_dir;
     }
 }
-

@@ -23,6 +23,9 @@ class s3_storage implements storage {
         $this->debug = (bool)($config['debug'] ?? getenv('SNAPPY_DEBUG'));
         $force_path = getenv('SNAPPY_S3_PATH_STYLE');
         $this->path_style = ($force_path === '1' || strtolower((string)$force_path) === 'true');
+        if (isset($config['path_style'])) {
+            $this->path_style = (bool)$config['path_style'];
+        }
         $this->auto_path_style = false;
         if (!$this->path_style) {
             $host = parse_url($this->endpoint, PHP_URL_HOST);
@@ -299,4 +302,3 @@ class s3_storage implements storage {
         return $key;
     }
 }
-
