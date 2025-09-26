@@ -1,20 +1,21 @@
 {
-  "version": 1,
   "remotes": {
-    "origin": {
+    "catalog": {
       "type": "s3",
       "config": {
         "endpoint": "http://localhost:8000",
-        "bucket": "snappy-dev",
-        "region": "us-east-1",
+        "bucket": "snaps",
         "key": "admin",
         "secret": "admin12345",
-        "path_style": true
-      },
-      "created": "2025-09-26T10:05:00Z"
+        "path_style": 1
+      }
+    },
+    "local": {
+      "type": "local",
+      "path": ""
     }
   },
   "options": {
-    "default_remote": "origin"
+    "default_remote": "catalog"
   }
 }

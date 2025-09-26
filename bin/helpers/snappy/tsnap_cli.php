@@ -20,14 +20,11 @@ $ctx = new context($remoteRegistry, $manager);
 
 // Dynamic command discovery
 $commands = [];
-$cli_dir = __DIR__ . '/src/cli';
-if (is_dir($cli_dir)) {
-    foreach (glob($cli_dir . '/*.php') as $file) {
+$commands_dir = __DIR__ . '/src/cli/commands';
+if (is_dir($commands_dir)) {
+    foreach (glob($commands_dir . '/*.php') as $file) {
         $baseName = basename($file, '.php');
-        if (in_array($baseName, ['command','context'])) {
-            continue;
-        }
-        $class = 'Snappy\\Cli\\' . $baseName;
+        $class = 'Snappy\\Cli\\Commands\\' . $baseName;
         if (class_exists($class)) {
             $instance = new $class();
             if ($instance instanceof command) {

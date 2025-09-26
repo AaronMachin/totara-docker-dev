@@ -65,8 +65,6 @@ class remote_registry {
         @file_put_contents($this->config_file, json_encode($payload, JSON_PRETTY_PRINT));
     }
 
-    public function reload(): void { $this->load(); }
-
     private function ensure_local(): void {
         if (!isset($this->remotes['local'])) {
             $this->remotes['local'] = [
@@ -126,5 +124,23 @@ class remote_registry {
     public function local_base_path(): string { return $this->remotes['local']['path']; }
 
     public function names(): array { return array_keys($this->remotes); }
-    public function first_non_local(): ?string { foreach ($this->remotes as $n => $m) { if ($n !== 'local') { return $n; } } return null; }
+
+    /**
+     * @throws \Exception
+     */
+    public function default(): ?string {
+        $default = $this->options['default_remote'] ?? null;
+
+        if ($default === null) {
+            throw new \Exception("No default remote configured");
+        }
+
+        foreach ($this->remotes as $remote => $m) {
+            if($remote === $default) {
+                return $remote;
+            }
+        }
+
+        throw new \Exception("Configured default remote '$default' does not exist");
+    }
 }

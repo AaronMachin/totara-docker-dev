@@ -3,33 +3,6 @@
 script_path="$( cd "$(dirname "$0")" ; pwd -P )"
 project_path="$( cd $script_path && cd ..; pwd -P )"
 
-if [[ "$1" == "-h" || "$1" == "--help" || -z "$1" ]]; then
-  cat <<'USAGE'
-Tsnap - simple object storage (S3/MinIO) helper.
-
-Usage:
-  tsnap list [--prefix=STR] [--limit=N]
-  tsnap get <key> [--output=/path/file]
-  tsnap cat <key>
-  tsnap snap [--type=sql] [-m "message"]
-  tsnap publish --snap=UID
-  tsnap help
-
-Environment (or pass via exported variables):
-  SNAPPY_S3_ENDPOINT, SNAPPY_S3_REGION, SNAPPY_S3_BUCKET, SNAPPY_S3_KEY, SNAPPY_S3_SECRET
-  NORMAL_BACKUP_LOCATION (defaults to $HOME/.tsnap/snaps)
-  TDB_BACKUP_PATH (tdb backup location; default from tdb if unset)
-
-Examples:
-  tsnap list --prefix=backups/ --limit=20
-  tsnap get backups/site1.sql.gz --output=./site1.sql.gz
-  tsnap cat notes/readme.txt
-  tsnap snap --type=sql -m "Backup before upgrade"
-  tsnap publish --snap=20250925-123000-ab12cd34
-USAGE
-  exit 0
-fi
-
 # Export all variables defined in .env so php (child process) can see them.
 if [[ -f "$project_path/.env" ]]; then
   set -a; source "$project_path/.env"; set +a

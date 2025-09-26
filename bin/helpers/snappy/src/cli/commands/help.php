@@ -1,5 +1,8 @@
 <?php
-namespace Snappy\Cli;
+namespace Snappy\Cli\Commands;
+
+use Snappy\Cli\command;
+use Snappy\Cli\context;
 
 class help implements command {
     private array $commands = [];
@@ -31,20 +34,20 @@ class help implements command {
             $n = $cmd->name();
             $max = max($max, strlen($n));
         }
-        echo "snappy snapshot service\n\nCommands:\n";
+        echo "tsnap snapshot service\n\nCommands:\n";
         foreach ($this->commands as $cmd) {
             $name = $cmd->name();
             $desc = $cmd->description();
             printf("  %-{$max}s  %s\n", $name, $desc);
         }
         echo "\nUsage examples:\n";
-        echo "  snappy snap -m 'before upgrade'\n";
-        echo "  snappy push a1b2c3 origin\n";
-        echo "  snappy pull a1b2c3 origin\n";
-        echo "  snappy list --full --remote=origin --limit=20\n";
-        echo "  snappy remote list\n";
-        echo "  snappy remote add origin s3 --endpoint=https://s3.example --bucket=mybucket --region=us-east-1 --key=AKIA... --secret=...\n";
-        echo "  snappy remote remove origin\n";
+        echo "  tsnap snap -m 'before upgrade'\n";
+        echo "  tsnap push a1b2c3 origin\n";
+        echo "  tsnap pull a1b2c3 origin\n";
+        echo "  tsnap list --full --remote=origin --limit=20\n";
+        echo "  tsnap remote list\n";
+        echo "  tsnap remote add origin s3 --endpoint=https://s3.example --bucket=mybucket --region=us-east-1 --key=AKIA... --secret=...\n";
+        echo "  tsnap remote remove origin\n";
         echo "\nSet SNAPPY_SNAPSHOT_ROOT to change local snapshot root.\n";
     }
 }

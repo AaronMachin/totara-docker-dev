@@ -1,6 +1,8 @@
 <?php
-namespace Snappy\Cli;
+namespace Snappy\Cli\Commands;
 
+use Snappy\Cli\command;
+use Snappy\Cli\context;
 use Snappy\Util\editor;
 use Throwable;
 
