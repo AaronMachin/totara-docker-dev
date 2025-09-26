@@ -4,8 +4,8 @@ namespace Snappy\Cli\Commands;
 use Snappy\Cli\command;
 use Snappy\Cli\context;
 
-class get implements command {
-    public function name(): string { return 'get'; }
+class pull implements command {
+    public function name(): string { return 'pull'; }
     public function description(): string { return 'Retrieve a snapshot from a remote into local storage (get <uid|prefix> [--remote=name] [--force])'; }
 
     public function run(array $args, context $ctx): int {
