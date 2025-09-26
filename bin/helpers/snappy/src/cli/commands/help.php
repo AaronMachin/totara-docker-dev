@@ -50,10 +50,13 @@ class help implements command {
         echo "  tsnap snap -m 'before upgrade'\n";
         echo "  tsnap push a1b2c3 origin\n";
         echo "  tsnap pull a1b2c3 origin\n";
+        echo "  tsnap pull --encoded ENCODED_STR a1b2c3\n";
+        echo "  tsnap host --bucket=mybucket --port=8000\n";
         echo "  tsnap list --full --remote=origin --limit=20\n";
         echo "  tsnap remote list\n";
         echo "  tsnap remote add origin s3 --endpoint=https://s3.example --bucket=mybucket --region=us-east-1 --key=AKIA... --secret=...\n";
         echo "  tsnap remote remove origin\n";
         echo "\nSet SNAPPY_SNAPSHOT_ROOT to change local snapshot root.\n";
+        echo "Ephemeral sharing: run 'tsnap host', share the encoded string with 'tsnap pull --encoded <str> <uid>'.\n";
     }
 }
