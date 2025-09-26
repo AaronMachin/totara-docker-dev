@@ -3,202 +3,108 @@
 namespace Snappy\Snapshot;
 
 use Exception;
+use RuntimeException;
 use Snappy\Storage\storage;
 use Snappy\Storage\local_storage;
 use Snappy\Storage\s3_storage;
-use RuntimeException;
+use Snappy\Config\config_manager;
 
-/**
- * Registry of snapshot remotes (local + user defined).
- * Persisted as JSON under config dir.
- */
 class remote_registry {
-    private string $base_path;       // base working directory for local snapshots
-    private string $config_file;     // now $base_path/config.json
-    private array $remotes = [];
-    private array $options = [];
+    private string $base_path;
     private array $storage_cache = [];
-    private int $config_version = 1;
-    private string $config_dir; // new: dedicated config directory separate from snapshot base
+    private config_manager $cfg;
 
-    public function __construct(string $base_path, ?string $config_dir = null) {
+    public function __construct(config_manager $cfg, string $base_path) {
         $trim = rtrim($base_path, '/');
-        if (basename($trim) === 'snaps') {
-            $trim = dirname($trim);
-        }
+        if (basename($trim) === 'snaps') { $trim = dirname($trim); }
         $this->base_path = $trim;
-        if (!is_dir($this->base_path)) {
-            @mkdir($this->base_path, 0777, true);
-        }
-        $this->config_dir = $config_dir ? rtrim($config_dir, '/') : $this->base_path;
-        if (!is_dir($this->config_dir)) {
-            @mkdir($this->config_dir, 0777, true);
-        }
-        $this->config_file = $this->config_dir . '/config.json';
-        $this->load();
-        $this->ensure_local();
-        $this->sync_local_path();
+        if (!is_dir($this->base_path)) { @mkdir($this->base_path, 0777, true); }
+        $this->cfg = $cfg;
+        $this->ensureLocal();
+        $this->syncLocalPath();
     }
 
-    private function sync_local_path(): void {
-        if (isset($this->remotes['local'])) {
-            $current = $this->remotes['local']['path'] ?? '';
-            if ($current !== $this->base_path) {
-                $this->remotes['local']['path'] = $this->base_path;
-                $this->persist();
-            }
-        }
-    }
-
-    private function load(): void {
-        $this->remotes = [];
-        $this->options = [];
-        if (is_file($this->config_file)) {
-            $data = @json_decode(@file_get_contents($this->config_file), true);
-            if (is_array($data)) {
-                $this->config_version = (int) ($data['version'] ?? 1);
-                if (!empty($data['remotes']) && is_array($data['remotes'])) {
-                    $this->remotes = $data['remotes'];
-                }
-                if (!empty($data['options']) && is_array($data['options'])) {
-                    $this->options = $data['options'];
-                }
-            }
-        }
-    }
-
-    private function persist(): void {
-        $payload = [
-            'version' => $this->config_version,
-            'remotes' => $this->remotes,
-            'options' => $this->options,
-            'updated' => date('c'),
-        ];
-        @file_put_contents($this->config_file, json_encode($payload, JSON_PRETTY_PRINT));
-    }
-
-    private function ensure_local(): void {
-        if (!isset($this->remotes['local'])) {
-            $this->remotes['local'] = [
+    private function ensureLocal(): void {
+        if (!$this->cfg->has('remotes.local')) {
+            $this->cfg->set('remotes.local', [
                 'type' => 'local',
                 'path' => $this->base_path,
                 'created' => date('c'),
-            ];
-            if (!isset($this->options['default_remote'])) {
-                $this->options['default_remote'] = 'local';
+            ]);
+            if (!$this->cfg->has('options.default_remote')) {
+                $this->cfg->set('options.default_remote', 'local');
             }
-            $this->persist();
+            $this->cfg->save();
         }
     }
 
-    public function options(): array {
-        return $this->options;
+    private function syncLocalPath(): void {
+        $cur = $this->cfg->get('remotes.local.path');
+        if ($cur !== $this->base_path) {
+            $this->cfg->set('remotes.local.path', $this->base_path)->save();
+        }
     }
 
-    public function get_option(string $key, $default = null) {
-        return $this->options[$key] ?? $default;
-    }
+    public function options(): array { return $this->cfg->get('options', []); }
+    public function get_option(string $key, $default = null) { return $this->cfg->get('options.'.$key, $default); }
+    public function set_option(string $key, $value): void { $this->cfg->set('options.'.$key, $value, true); }
 
-    public function set_option(string $key, $value): void {
-        $this->options[$key] = $value;
-        $this->persist();
-    }
-
-    public function list(): array {
-        return $this->remotes;
-    }
+    public function list(): array { return $this->cfg->get('remotes', []); }
+    public function has(string $name): bool { return $this->cfg->has('remotes.'.$name); }
+    public function names(): array { return array_keys($this->cfg->get('remotes', [])); }
 
     public function add(string $name, string $type, array $config): void {
-        // Validation enhancements
-        if ($name === 'local') {
-            throw new RuntimeException('Cannot redefine reserved remote "local"');
-        }
-        if (!preg_match('/^[a-zA-Z0-9._-]+$/', $name)) {
-            throw new RuntimeException('Invalid remote name (allowed: a-zA-Z0-9._-)');
-        }
-        if (isset($this->remotes[$name])) {
-            throw new RuntimeException('Remote already exists: ' . $name);
-        }
-        $allowed = ['s3'];
-        if (!in_array($type, $allowed, true)) {
-            throw new RuntimeException('Unsupported remote type: ' . $type);
-        }
+        if ($name === 'local') { throw new RuntimeException('Cannot redefine reserved remote "local"'); }
+        if (!preg_match('/^[a-zA-Z0-9._-]+$/', $name)) { throw new RuntimeException('Invalid remote name'); }
+        if ($this->has($name)) { throw new RuntimeException('Remote already exists: '.$name); }
+        if (!in_array($type, ['s3'], true)) { throw new RuntimeException('Unsupported remote type: '.$type); }
         if ($type === 's3') {
-            $required = ['endpoint', 'bucket', 'region', 'key', 'secret'];
-            $missing = [];
-            foreach ($required as $k) {
-                if (($config[$k] ?? '') === '') {
-                    $missing[] = $k;
+            $defaults = $this->cfg->get('options.s3', []);
+            $autoKeys = ['endpoint','bucket','region','key','secret','path_style','debug'];
+            foreach ($autoKeys as $k) {
+                if (!array_key_exists($k, $config) || $config[$k] === '' || $config[$k] === null) {
+                    if (isset($defaults[$k]) && $defaults[$k] !== '') { $config[$k] = $defaults[$k]; }
                 }
             }
-            if ($missing) {
-                throw new RuntimeException('Missing s3 config keys: ' . implode(', ', $missing));
-            }
+            $required = ['endpoint','bucket','key','secret'];
+            $missing=[];foreach($required as $r){ if(($config[$r]??'')===''){ $missing[]=$r; }}
+            if($missing){ throw new RuntimeException('Missing s3 config keys: '.implode(', ',$missing)); }
+            if (!isset($config['region']) || $config['region']==='') { $config['region'] = $defaults['region'] ?? 'us-east-1'; }
         }
-        $this->remotes[$name] = ['type' => $type, 'config' => $config, 'created' => date('c')];
-        $this->persist();
+        $entry = ['type'=>$type, 'created'=>date('c')];
+        if ($type === 's3') { $entry['config'] = $config; }
+        if ($type === 'local') { $entry['path'] = $config['path'] ?? $this->base_path; }
+        $this->cfg->set('remotes.'.$name, $entry)->save();
         unset($this->storage_cache[$name]);
     }
 
     public function remove(string $name): void {
-        if ($name === 'local') {
-            throw new RuntimeException('Cannot remove local remote');
-        }
-        if (!isset($this->remotes[$name])) {
-            throw new RuntimeException('Unknown remote ' . $name);
-        }
-        unset($this->remotes[$name], $this->storage_cache[$name]);
-        $this->persist();
-    }
-
-    public function has(string $name): bool {
-        return isset($this->remotes[$name]);
+        if ($name === 'local') { throw new RuntimeException('Cannot remove local remote'); }
+        if (!$this->has($name)) { throw new RuntimeException('Unknown remote '.$name); }
+        $this->cfg->remove('remotes.'.$name, true);
+        unset($this->storage_cache[$name]);
     }
 
     public function storage(string $name): storage {
-        if (!isset($this->remotes[$name])) {
-            throw new RuntimeException('Unknown remote ' . $name);
-        }
-        if (isset($this->storage_cache[$name])) {
-            return $this->storage_cache[$name];
-        }
-        $meta = $this->remotes[$name];
-        $type = $meta['type'];
-        if ($type === 'local') {
-            $st = new local_storage($meta['path']);
-        } elseif ($type === 's3') {
-            $st = new s3_storage($meta['config'] ?? []);
-        } else {
-            throw new RuntimeException('Unsupported remote type ' . $type);
-        }
-        $this->storage_cache[$name] = $st;
-        return $st;
+        if (!$this->has($name)) { throw new RuntimeException('Unknown remote '.$name); }
+        if (isset($this->storage_cache[$name])) { return $this->storage_cache[$name]; }
+        $meta = $this->cfg->get('remotes.'.$name);
+        $type = $meta['type'] ?? '';
+        if ($type === 'local') { $st = new local_storage($meta['path']); }
+        elseif ($type === 's3') { $st = new s3_storage($meta['config'] ?? []); }
+        else { throw new RuntimeException('Unsupported remote type '.$type); }
+        return $this->storage_cache[$name] = $st;
     }
 
-    public function local_base_path(): string {
-        return $this->remotes['local']['path'];
-    }
+    public function local_base_path(): string { return $this->cfg->get('remotes.local.path', $this->base_path); }
 
-    public function names(): array {
-        return array_keys($this->remotes);
-    }
-
-    /**
-     * @throws Exception
-     */
+    /** @throws Exception */
     public function default(): ?string {
-        $default = $this->options['default_remote'] ?? null;
-
-        if ($default === null) {
-            throw new Exception("No default remote configured");
-        }
-
-        foreach ($this->remotes as $remote => $m) {
-            if ($remote === $default) {
-                return $remote;
-            }
-        }
-
-        throw new Exception("Configured default remote '$default' does not exist");
+        $default = $this->get_option('default_remote');
+        if ($default === null) { throw new Exception('No default remote configured'); }
+        if (!$this->has($default)) { throw new Exception("Configured default remote '$default' does not exist"); }
+        return $default;
     }
+
+    public function config_manager(): config_manager { return $this->cfg; }
 }

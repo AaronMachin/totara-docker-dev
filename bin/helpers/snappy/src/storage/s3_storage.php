@@ -19,17 +19,13 @@ class s3_storage implements storage {
     private bool $auto_path_style;
 
     public function __construct(array $config = []) {
-        $this->endpoint = rtrim($config['endpoint'] ?? getenv('SNAPPY_S3_ENDPOINT') ?: '', '/');
-        $this->region = $config['region'] ?? getenv('SNAPPY_S3_REGION') ?: 'us-east-1';
-        $this->bucket = $config['bucket'] ?? getenv('SNAPPY_S3_BUCKET') ?: '';
-        $this->key = $config['key'] ?? getenv('SNAPPY_S3_KEY') ?: '';
-        $this->secret = $config['secret'] ?? getenv('SNAPPY_S3_SECRET') ?: '';
-        $this->debug = (bool) ($config['debug'] ?? getenv('SNAPPY_DEBUG'));
-        $force_path = getenv('SNAPPY_S3_PATH_STYLE');
-        $this->path_style = ($force_path === '1' || strtolower((string) $force_path) === 'true');
-        if (isset($config['path_style'])) {
-            $this->path_style = (bool) $config['path_style'];
-        }
+        $this->endpoint = rtrim($config['endpoint'] ?? '', '/');
+        $this->region = $config['region'] ?? 'us-east-1';
+        $this->bucket = $config['bucket'] ?? '';
+        $this->key = $config['key'] ?? '';
+        $this->secret = $config['secret'] ?? '';
+        $this->debug = (bool)($config['debug'] ?? false);
+        $this->path_style = (bool)($config['path_style'] ?? false);
         $this->auto_path_style = false;
         if (!$this->path_style) {
             $host = parse_url($this->endpoint, PHP_URL_HOST);
@@ -38,17 +34,8 @@ class s3_storage implements storage {
             }
         }
         $missing = [];
-        if ($this->endpoint === '') {
-            $missing[] = 'SNAPPY_S3_ENDPOINT';
-        }
-        if ($this->bucket === '') {
-            $missing[] = 'SNAPPY_S3_BUCKET';
-        }
-        if ($this->key === '') {
-            $missing[] = 'SNAPPY_S3_KEY';
-        }
-        if ($this->secret === '') {
-            $missing[] = 'SNAPPY_S3_SECRET';
+        foreach (['endpoint','bucket','key','secret'] as $req) {
+            if ($this->$req === '') { $missing[] = $req; }
         }
         if ($missing) {
             throw new RuntimeException('Missing config: ' . implode(', ', $missing));

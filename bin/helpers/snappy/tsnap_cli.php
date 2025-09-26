@@ -11,15 +11,21 @@ use Snappy\Snapshot\remote_registry;
 use Snappy\Snapshot\snapshot_manager;
 use Snappy\Snapshot\remote_snapshot_cache;
 use Snappy\Cli\command;
+use Snappy\Config\config_manager;
 
 // Build core context (multi-remote). Local remote always present.
-$snapshotBase = getenv('SNAPPY_SNAPSHOT_ROOT') ?: (getenv('HOME') . '/.snappy');
-$configDir = __DIR__; // always use project snappy dir for config.json
-$remoteRegistry = new remote_registry($snapshotBase, $configDir);
+// Load config first (using a provisional base path); then derive snapshot root from config schema default/user value.
+$home = getenv('HOME') ?: '~';
+$configDir = __DIR__;
+$configFile = $configDir . '/config.json';
+$provisionalBase = $home . '/.snappy';
+$config = new config_manager($configFile, $provisionalBase);
+$snapshotBase = $config->get('options.snapshot_root', $provisionalBase);
+$remoteRegistry = new remote_registry($config, $snapshotBase);
 $manager = new snapshot_manager($remoteRegistry);
 $cache = new remote_snapshot_cache($snapshotBase);
 $manager->set_cache($cache);
-$ctx = new context($remoteRegistry, $manager, $cache);
+$ctx = new context($config, $remoteRegistry, $manager, $cache);
 
 // Dynamic command discovery
 $commands = [];

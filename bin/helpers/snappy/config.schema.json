@@ -1,0 +1,64 @@
+{
+  "fields": {
+    "options.snapshot_root": {
+      "description": "Base directory for local snapshots",
+      "default": "<home>/.snappy",
+      "required": true
+    },
+    "options.backup_path": {
+      "description": "Directory for database backup files used in snapshots",
+      "default": "<home>/tdb_backups",
+      "required": true
+    },
+    "options.cache_max_age_seconds": {
+      "description": "Max age in seconds before a remote cache entry is stale",
+      "default": 900,
+      "required": true
+    },
+    "options.default_remote": {
+      "description": "Default remote name used when commands omit --remote",
+      "default": "local",
+      "required": true
+    },
+    "options.debug": {
+      "description": "Enable verbose debug output for certain operations",
+      "default": false,
+      "required": false
+    },
+    "options.s3.endpoint": {
+      "description": "Default S3 endpoint for new s3 remotes",
+      "default": "",
+      "required": false
+    },
+    "options.s3.bucket": {
+      "description": "Default S3 bucket for new s3 remotes",
+      "default": "",
+      "required": false
+    },
+    "options.s3.region": {
+      "description": "Default S3 region",
+      "default": "us-east-1",
+      "required": false
+    },
+    "options.s3.key": {
+      "description": "Default S3 access key",
+      "default": "",
+      "required": false
+    },
+    "options.s3.secret": {
+      "description": "Default S3 secret key",
+      "default": "",
+      "required": false
+    },
+    "options.s3.path_style": {
+      "description": "Default S3 path style flag",
+      "default": false,
+      "required": false
+    },
+    "options.s3.debug": {
+      "description": "Default S3 debug flag",
+      "default": false,
+      "required": false
+    }
+  }
+}

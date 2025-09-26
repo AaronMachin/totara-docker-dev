@@ -49,7 +49,13 @@ class push implements command {
             return 3;
         }
         echo "pushed $resolved to $target ($count objects)\n";
+        // Refresh cache for target remote (like a focused fetch) so subsequent list / resolve operations are up-to-date.
+        try {
+            $stats = $ctx->cache->update_remote($target, $ctx->registry, $ctx->manager, 2000);
+            echo "cache refreshed: +{$stats['fetched']} -{$stats['removed']} (total {$stats['total']})\n";
+        } catch (Throwable $e) {
+            fwrite(STDERR, "warning: cache refresh failed for $target: " . $e->getMessage() . "\n");
+        }
         return 0;
     }
 }
-

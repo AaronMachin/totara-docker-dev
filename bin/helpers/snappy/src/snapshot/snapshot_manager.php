@@ -56,16 +56,13 @@ class snapshot_manager {
         $tdb = 'tdb';
         $cmd = escapeshellcmd($tdb) . ' backup --alias ' . escapeshellarg($uid) . ' > /dev/null 2>&1';
         system($cmd);
-        $default_path = getenv('SNAPPY_TDB_BACKUP_PATH');
-        if (!$default_path) {
-            $default_path = getenv('HOME') . '/tdb_backups';
-        }
+        // Use configured backup path with schema-applied default
+        $config = $this->registry->config_manager()->all();
+        $default_path = $config['options']['backup_path'] ?? '';
         $candidate = '';
-        if (is_dir($default_path)) {
-            $matches = glob($default_path . '/' . $uid . '.*');
-            if ($matches) {
-                $candidate = $matches[0];
-            }
+        if ($default_path && is_dir($default_path)) {
+            $matches = glob(rtrim($default_path, '/') . '/' . $uid . '.*');
+            if ($matches) { $candidate = $matches[0]; }
         }
         if (!$candidate || !is_file($candidate)) {
             throw new RuntimeException('could not locate database backup for uid ' . $uid . ' in ' . $default_path . ' (backup may have failed)');
