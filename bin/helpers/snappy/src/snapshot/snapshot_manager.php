@@ -8,11 +8,14 @@ use Throwable;
 
 class snapshot_manager {
     private remote_registry $registry;
+    private ?remote_snapshot_cache $cache = null;
 
     public function __construct(remote_registry $registry) {
         $this->registry = $registry;
     }
 
+    public function set_cache(remote_snapshot_cache $cache): void { $this->cache = $cache; }
+    public function cache(): ?remote_snapshot_cache { return $this->cache; }
     public function registry(): remote_registry {
         return $this->registry;
     }
@@ -73,7 +76,27 @@ class snapshot_manager {
         $meta['file_checksums']['backup.sql'] = hash_file('sha256', $backup_file);
     }
 
-    public function list(string $remote, bool $full = false, int $limit = 100): array {
+    public function list(string $remote, bool $full = false, int $limit = 100, bool $bypassCache = false): array {
+        if ($remote !== 'local' && $this->cache && !$bypassCache) {
+            $c = $this->cache->load($remote);
+            if ($c) {
+                $rows = [];
+                foreach ($c['snapshots'] as $uid => $row) {
+                    $msg = (string) ($row['message'] ?? '');
+                    if (!$full) { $msg = preg_split('/\r?\n/', $msg, 2)[0] ?? ''; } else { $msg = preg_replace('/\r?\n+/', ' | ', $msg); }
+                    $rows[] = [
+                        'uid' => $uid,
+                        'created' => $row['created'] ?? '',
+                        'type' => $row['type'] ?? '',
+                        'message' => $msg,
+                    ];
+                }
+                usort($rows, fn($a,$b) => strcmp($b['created'],$a['created']));
+                if (count($rows)>$limit) { $rows = array_slice($rows,0,$limit); }
+                return $rows;
+            }
+            // fall through to live listing if no cache
+        }
         $storage = $this->registry->storage($remote);
         $objects = $storage->list_objects('snaps/', $limit * 10); // overscan to filter meta
         $snapshots = [];
@@ -254,8 +277,16 @@ class snapshot_manager {
 
     public function resolve_uid(string $partial, string $remote = 'local'): string {
         $partial = trim($partial);
-        if ($partial === '') {
-            return '';
+        if ($partial === '') { return ''; }
+        if ($remote !== 'local' && $this->cache) {
+            $c = $this->cache->load($remote);
+            if ($c) {
+                $uids = array_keys($c['snapshots']);
+                if (in_array($partial, $uids, true)) { return $partial; }
+                $matches = [];
+                foreach ($uids as $u) { if (str_starts_with($u, $partial)) { $matches[] = $u; } }
+                return count($matches) === 1 ? $matches[0] : '';
+            }
         }
         $uids = array_map(fn($r) => $r['uid'], $this->list($remote, false, 1000));
         if (in_array($partial, $uids, true)) {
@@ -280,6 +311,10 @@ class snapshot_manager {
         }
         $this->verify($source_remote, $uid, $meta);
         $target = $this->registry->storage($target_remote);
+        // Ensure bucket exists if S3 storage
+        if (method_exists($target, 'ensure_bucket')) {
+            try { $target->ensure_bucket(); } catch (Throwable $e) { /* ignore bucket create race */ }
+        }
         $count = 0;
         foreach ($meta['files'] as $file) {
             $path = $this->local_snapshot_dir($uid) . '/' . $file;

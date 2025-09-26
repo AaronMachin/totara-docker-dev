@@ -131,6 +131,78 @@ class s3_storage implements storage {
         return $uploaded;
     }
 
+    public function ensure_bucket(): void {
+        // Try a lightweight list to detect existence
+        try {
+            $this->list_objects('', 1);
+            return; // exists
+        } catch (RuntimeException $e) {
+            $msg = $e->getMessage();
+            if (stripos($msg, 'NoSuchBucket') === false && strpos($msg, '404') === false) {
+                // Some other error; do not attempt create
+                return;
+            }
+            // proceed to create
+        }
+        // Build create bucket request
+        $use_path = $this->path_style || $this->auto_path_style;
+        $scheme = parse_url($this->endpoint, PHP_URL_SCHEME);
+        $endpoint_host = parse_url($this->endpoint, PHP_URL_HOST);
+        $port = parse_url($this->endpoint, PHP_URL_PORT);
+        $host = $use_path ? $endpoint_host : ($this->bucket . '.' . $endpoint_host);
+        if ($port) { $host .= ':' . $port; }
+        $uri = $use_path ? '/' . $this->bucket : '/';
+        $body = '';
+        if ($this->region !== 'us-east-1') {
+            $body = '<CreateBucketConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><LocationConstraint>' . htmlspecialchars($this->region, ENT_QUOTES) . '</LocationConstraint></CreateBucketConfiguration>';
+        }
+        $amz = gmdate('Ymd\THis\Z');
+        $date = gmdate('Ymd');
+        $payload_hash = hash('sha256', $body);
+        $headers = [
+            'Host' => $host,
+            'x-amz-date' => $amz,
+            'x-amz-content-sha256' => $payload_hash,
+            'Content-Length' => strlen($body),
+        ];
+        if ($body !== '') {
+            $headers['Content-Type'] = 'application/xml';
+        }
+        ksort($headers, SORT_STRING | SORT_FLAG_CASE);
+        $canonical_headers = '';
+        $signed = [];
+        foreach ($headers as $h => $v) {
+            $hl = strtolower($h);
+            $canonical_headers .= $hl . ':' . trim($v) . "\n";
+            $signed[] = $hl;
+        }
+        sort($signed);
+        $signed_str = implode(';', $signed);
+        $canonical_request = 'PUT' . "\n" . $uri . "\n\n" . $canonical_headers . "\n" . $signed_str . "\n" . $payload_hash;
+        $scope = $date . '/' . $this->region . '/s3/aws4_request';
+        $string_to_sign = 'AWS4-HMAC-SHA256' . "\n" . $amz . "\n" . $scope . "\n" . hash('sha256', $canonical_request);
+        $signing_key = $this->signing_key($date, $this->region, 's3');
+        $signature = hash_hmac('sha256', $string_to_sign, $signing_key);
+        $headers['Authorization'] = 'AWS4-HMAC-SHA256 Credential=' . $this->key . '/' . $scope . ', SignedHeaders=' . $signed_str . ', Signature=' . $signature;
+        $url = $scheme . '://' . $host . $uri;
+        $header_lines = [];
+        foreach ($headers as $k => $v) { $header_lines[] = $k . ': ' . $v; }
+        $ch = curl_init($url);
+        curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'PUT');
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, $header_lines);
+        if ($body !== '') { curl_setopt($ch, CURLOPT_POSTFIELDS, $body); }
+        curl_setopt($ch, CURLOPT_FAILONERROR, false);
+        $resp = curl_exec($ch);
+        $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+        // Accept 200 OK, 201 Created, 204 No Content. 409 BucketAlreadyOwnedByYou is fine.
+        if (in_array($status, [200,201,202,204,409], true)) {
+            return;
+        }
+        throw new RuntimeException('bucket create failed status ' . $status . ' ' . $resp);
+    }
+
     private function guess_mime(string $path): string {
         if (function_exists('finfo_open')) {
             $f = finfo_open(FILEINFO_MIME_TYPE);

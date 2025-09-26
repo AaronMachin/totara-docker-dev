@@ -12,8 +12,6 @@ services:
     volumes:
       - data:/data
     restart: unless-stopped
-    networks:
-      totara:
 
 volumes:
   data:

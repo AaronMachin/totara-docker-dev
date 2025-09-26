@@ -1,6 +1,6 @@
 {
   "remotes": {
-    "catalog": {
+    "hosted_s3": {
       "type": "s3",
       "config": {
         "endpoint": "http://localhost:8000",

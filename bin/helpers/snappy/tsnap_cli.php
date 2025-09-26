@@ -6,9 +6,10 @@
 
 require_once __DIR__ . '/snappy_autoload.php';
 
+use Snappy\Cli\context;
 use Snappy\Snapshot\remote_registry;
 use Snappy\Snapshot\snapshot_manager;
-use Snappy\Cli\context;
+use Snappy\Snapshot\remote_snapshot_cache;
 use Snappy\Cli\command;
 
 // Build core context (multi-remote). Local remote always present.
@@ -16,7 +17,9 @@ $snapshotBase = getenv('SNAPPY_SNAPSHOT_ROOT') ?: (getenv('HOME') . '/.snappy');
 $configDir = __DIR__; // always use project snappy dir for config.json
 $remoteRegistry = new remote_registry($snapshotBase, $configDir);
 $manager = new snapshot_manager($remoteRegistry);
-$ctx = new context($remoteRegistry, $manager);
+$cache = new remote_snapshot_cache($snapshotBase);
+$manager->set_cache($cache);
+$ctx = new context($remoteRegistry, $manager, $cache);
 
 // Dynamic command discovery
 $commands = [];
