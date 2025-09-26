@@ -15,6 +15,8 @@ source "$project_path/tools/check_for_update.sh"
 ignore_dataroot=0
 force_backup=0
 for_totara_box=0
+opt_database=""
+opt_alias=""
 
 # Parse arguments
 positional=()
@@ -32,7 +34,19 @@ while [[ $# -gt 0 ]]; do
       for_totara_box=1
       shift
       ;;
-    -*)
+    -d|--database)
+      if [[ -z "$2" || "$2" == -* ]]; then
+        echo "--database requires a value"; exit 1; fi
+      opt_database="$2"
+      shift 2
+      ;;
+    -a|--alias)
+      if [[ -z "$2" || "$2" == -* ]]; then
+        echo "--alias requires a value"; exit 1; fi
+      opt_alias="$2"
+      shift 2
+      ;;
+    -*-)
       echo "Unknown option: $1"
       exit 1
       ;;
@@ -82,16 +96,21 @@ Actions:
   list         List available backups for this database family
 
 Options:
-  -i, --ignore-dataroot    Ignore the dataroot directory when backing up and restoring.
-  -f, --force              Overwrite any existing database and dataroot backups if they already exist.
-  -b, --totara-box         Backup and restore the database in a format compatible with Totara box (Postgres only)
+  -i, --ignore-dataroot          Ignore the dataroot directory when backing up and restoring.
+  -f, --force                    Overwrite any existing database and dataroot backups if they already exist.
+  -b, --totara-box               Backup and restore the database in a format compatible with Totara box (Postgres only)
+  -d, --database <name>          Specify database name (alternative to positional database argument).
+  -a, --alias <backup-alias>     Specify backup alias (alternative to positional backup alias argument).
 
 Examples:
   $script_name create                                // Will create a database with the name defined in your config.php if it doesn't already exist
   $script_name drop unt_totara13                     // Will drop the database with the name 'unt_totara13'
   $script_name backup --ignore-dataroot              // Will backup the database but not the dataroot to backup directory specified in the .env file
+  $script_name backup --database mydb --alias myal   // Will backup database 'mydb' using alias 'myal'
   $script_name backup mydatabasename myalias         // Will backup the database 'mydatabasename' and use 'myalias' as a name for the backup files
+  $script_name backup --alias myalias                // Will backup the configured database using alias 'myalias'
   $script_name restore totara13 myalias              // Will restore the database dumped with the alias 'myalias' into the 'totara13' database
+  $script_name restore --database totara13 --alias myalias
   $script_name list                                  // Will list all the database backups compatible with the database family
 "
     exit;
@@ -140,8 +159,10 @@ db_name=${config_vars[3]}
 db_user=${config_vars[4]}
 db_password=${config_vars[5]}
 
-# Second argument overrides the the db name
-if [[ -n $2 ]]; then
+# Second argument or --database option overrides the db name
+if [[ -n "$opt_database" ]]; then
+    db_name="$opt_database"
+elif [[ -n $2 ]]; then
     db_name=$2
 fi
 
@@ -164,6 +185,14 @@ fi
 
 # Get the backup file path. Defaults to a new backup folder in the users's home directory.
 if [[ $action == 'backup' || $action == 'restore' || $action == 'list' ]]; then
+    # Determine backup alias (option takes precedence over positional third argument)
+    backup_alias=""
+    if [[ -n "$opt_alias" ]]; then
+        backup_alias="$opt_alias"
+    elif [[ -n $3 ]]; then
+        backup_alias="$3"
+    fi
+
     backup_folder_remote='/tdb_backups'
     if [ -z "$TDB_BACKUP_PATH" ]; then
         backup_folder_local="${HOME}${backup_folder_remote}"
@@ -179,15 +208,15 @@ if [[ $action == 'backup' || $action == 'restore' || $action == 'list' ]]; then
         fi
     fi
 
-    if [[ -z "$3" && $action != 'list' ]]; then
+    if [[ -z "$backup_alias" && $action != 'list' ]]; then
         backup_file_remote="$backup_folder_remote/${db_name}.${db_type}"
         backup_file_local="$backup_folder_local/${db_name}.${db_type}"
         backup_file_name=$(basename "$backup_file_local")
         echo -e "\x1B[2mNote: Backup file alias was not specified. Will use \x1B[0m\x1B[4m\x1B[37m$backup_file_name\x1B[0m"
     else
-        backup_file_local="$backup_folder_local/$3.${db_type}"
+        backup_file_local="$backup_folder_local/$backup_alias.${db_type}"
         if [ "$for_totara_box" == "1" ]; then
-            backup_file_local="$backup_folder_local/$3.dump"
+            backup_file_local="$backup_folder_local/$backup_alias.dump"
         fi
         backup_file_name=$(basename "$backup_file_local")
         backup_file_remote="$backup_folder_remote/$backup_file_name"
