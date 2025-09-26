@@ -18,6 +18,7 @@ files=(
     "compose/pgsql.yml"
     "compose/php.yml"
     "compose/selenium.yml"
+    "compose/bucket.yml"
 )
 
 if [[ ! -z "${ML_TOTARA_PROJECT}" ]]; then
