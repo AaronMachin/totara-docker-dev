@@ -182,9 +182,9 @@ class manager {
             'e' => $endpoint,
             'b' => $opts['bucket'] ?? 'snappy',
             'r' => $opts['region'] ?? 'us-east-1',
+            'k' => $opts['key'] ?? 'admin',
+            's' => $opts['secret'] ?? 'secret',
         ];
-        $k = $opts['key'] ?? ''; $sec = $opts['secret'] ?? '';
-        if ($k !== '' && $sec !== '') { $payload['k'] = $k; $payload['s'] = $sec; }
         $p = $opts['prefix'] ?? '';
         if ($p !== '') { $payload['p'] = $p; }
         return remote_codec::encode($payload);

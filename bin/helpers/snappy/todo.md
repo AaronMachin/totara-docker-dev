@@ -1,1 +1,1 @@
-- refactor host command and hosting util to remove __HELP__ handling and instead handle it itself
+share tool needs to be clear when a user is trying to share a local snap 
