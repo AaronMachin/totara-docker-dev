@@ -1,6 +1,10 @@
 <?php
+
 namespace Snappy\Storage;
 
+use FilesystemIterator;
+use RecursiveDirectoryIterator;
+use RecursiveIteratorIterator;
 use RuntimeException;
 use InvalidArgumentException;
 
@@ -20,11 +24,11 @@ class s3_storage implements storage {
         $this->bucket = $config['bucket'] ?? getenv('SNAPPY_S3_BUCKET') ?: '';
         $this->key = $config['key'] ?? getenv('SNAPPY_S3_KEY') ?: '';
         $this->secret = $config['secret'] ?? getenv('SNAPPY_S3_SECRET') ?: '';
-        $this->debug = (bool)($config['debug'] ?? getenv('SNAPPY_DEBUG'));
+        $this->debug = (bool) ($config['debug'] ?? getenv('SNAPPY_DEBUG'));
         $force_path = getenv('SNAPPY_S3_PATH_STYLE');
-        $this->path_style = ($force_path === '1' || strtolower((string)$force_path) === 'true');
+        $this->path_style = ($force_path === '1' || strtolower((string) $force_path) === 'true');
         if (isset($config['path_style'])) {
-            $this->path_style = (bool)$config['path_style'];
+            $this->path_style = (bool) $config['path_style'];
         }
         $this->auto_path_style = false;
         if (!$this->path_style) {
@@ -34,10 +38,18 @@ class s3_storage implements storage {
             }
         }
         $missing = [];
-        if ($this->endpoint === '') { $missing[] = 'SNAPPY_S3_ENDPOINT'; }
-        if ($this->bucket === '') { $missing[] = 'SNAPPY_S3_BUCKET'; }
-        if ($this->key === '') { $missing[] = 'SNAPPY_S3_KEY'; }
-        if ($this->secret === '') { $missing[] = 'SNAPPY_S3_SECRET'; }
+        if ($this->endpoint === '') {
+            $missing[] = 'SNAPPY_S3_ENDPOINT';
+        }
+        if ($this->bucket === '') {
+            $missing[] = 'SNAPPY_S3_BUCKET';
+        }
+        if ($this->key === '') {
+            $missing[] = 'SNAPPY_S3_KEY';
+        }
+        if ($this->secret === '') {
+            $missing[] = 'SNAPPY_S3_SECRET';
+        }
         if ($missing) {
             throw new RuntimeException('Missing config: ' . implode(', ', $missing));
         }
@@ -51,7 +63,7 @@ class s3_storage implements storage {
     }
 
     public function list_objects(string $prefix = '', int $max = 100): array {
-        $params = [ 'list-type' => 2, 'max-keys' => min($max, 1000) ];
+        $params = ['list-type' => 2, 'max-keys' => min($max, 1000)];
         if ($prefix !== '') {
             $params['prefix'] = $prefix;
         }
@@ -65,9 +77,9 @@ class s3_storage implements storage {
         if (!empty($xml->Contents)) {
             foreach ($xml->Contents as $obj) {
                 $out[] = [
-                    'key' => (string)$obj->Key,
-                    'size' => (int)$obj->Size,
-                    'last_modified' => (string)$obj->LastModified,
+                    'key' => (string) $obj->Key,
+                    'size' => (int) $obj->Size,
+                    'last_modified' => (string) $obj->LastModified,
                 ];
                 if (count($out) >= $max) {
                     break;
@@ -103,7 +115,7 @@ class s3_storage implements storage {
             return $uploaded;
         }
         $base_len = strlen($local_path) + 1;
-        $rii = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($local_path, \FilesystemIterator::SKIP_DOTS));
+        $rii = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($local_path, FilesystemIterator::SKIP_DOTS));
         foreach ($rii as $file_info) {
             if ($file_info->isDir()) {
                 continue;

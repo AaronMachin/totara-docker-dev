@@ -1,7 +1,11 @@
 <?php
+
 namespace Snappy\Storage;
 
+use FilesystemIterator;
 use InvalidArgumentException;
+use RecursiveDirectoryIterator;
+use RecursiveIteratorIterator;
 use RuntimeException;
 
 /**
@@ -20,7 +24,9 @@ class local_storage implements storage {
         }
     }
 
-    public function base_path(): string { return $this->base_path; }
+    public function base_path(): string {
+        return $this->base_path;
+    }
 
     private function full_path(string $key): string {
         $key = ltrim($key, '/');
@@ -54,9 +60,11 @@ class local_storage implements storage {
             }
         }
         $len = strlen($base) + 1;
-        $it = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($search_root, \FilesystemIterator::SKIP_DOTS));
+        $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($search_root, FilesystemIterator::SKIP_DOTS));
         foreach ($it as $fileinfo) {
-            if ($fileinfo->isDir()) { continue; }
+            if ($fileinfo->isDir()) {
+                continue;
+            }
             $path = $fileinfo->getPathname();
             $rel = substr($path, $len);
             if ($prefix !== '' && strpos($rel, $prefix) !== 0) {
@@ -64,10 +72,12 @@ class local_storage implements storage {
             }
             $out[] = [
                 'key' => str_replace('\\', '/', $rel),
-                'size' => (int)$fileinfo->getSize(),
+                'size' => (int) $fileinfo->getSize(),
                 'last_modified' => date('c', $fileinfo->getMTime()),
             ];
-            if (count($out) >= $max) { break; }
+            if (count($out) >= $max) {
+                break;
+            }
         }
         return $out;
     }
@@ -112,9 +122,11 @@ class local_storage implements storage {
             return $uploaded;
         }
         $base_len = strlen($local_path) + 1;
-        $rii = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($local_path, \FilesystemIterator::SKIP_DOTS));
+        $rii = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($local_path, FilesystemIterator::SKIP_DOTS));
         foreach ($rii as $file_info) {
-            if ($file_info->isDir()) { continue; }
+            if ($file_info->isDir()) {
+                continue;
+            }
             $rel = substr($file_info->getPathname(), $base_len);
             $key = ($prefix ? $prefix . '/' : '') . str_replace('\\', '/', $rel);
             $this->put_object($key, $file_info->getPathname());

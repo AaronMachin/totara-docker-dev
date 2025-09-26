@@ -1,4 +1,5 @@
 <?php
+
 namespace Snappy\Util;
 
 class color {
@@ -6,7 +7,7 @@ class color {
     private static array $palette = [
         'local' => 32, // green
     ];
-    private static array $available = [34,36,35,33,31]; // blue, cyan, magenta, yellow, red
+    private static array $available = [34, 36, 35, 33, 31]; // blue, cyan, magenta, yellow, red
 
     public static function enabled(): bool {
         if (self::$enabled === null) {
@@ -17,10 +18,14 @@ class color {
         return self::$enabled;
     }
 
-    public static function disable(): void { self::$enabled = false; }
+    public static function disable(): void {
+        self::$enabled = false;
+    }
 
     public static function colorize(string $text, int $code): string {
-        if (!self::enabled()) { return $text; }
+        if (!self::enabled()) {
+            return $text;
+        }
         return "\033[" . $code . "m" . $text . "\033[0m";
     }
 

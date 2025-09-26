@@ -1,4 +1,5 @@
 <?php
+
 namespace Snappy\Cli;
 
 use Snappy\Snapshot\snapshot_manager;

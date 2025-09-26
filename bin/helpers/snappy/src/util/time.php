@@ -1,4 +1,5 @@
 <?php
+
 namespace Snappy\Util;
 
 class time {

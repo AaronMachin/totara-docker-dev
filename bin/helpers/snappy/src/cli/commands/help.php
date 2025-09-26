@@ -1,4 +1,5 @@
 <?php
+
 namespace Snappy\Cli\Commands;
 
 use Snappy\Cli\command;
@@ -7,8 +8,13 @@ use Snappy\Cli\context;
 class help implements command {
     private array $commands = [];
 
-    public function name(): string { return 'help'; }
-    public function description(): string { return 'Show help for all commands'; }
+    public function name(): string {
+        return 'help';
+    }
+
+    public function description(): string {
+        return 'Show help for all commands';
+    }
 
     public function set_commands(array $commands): void {
         // Filter only command instances

@@ -1,4 +1,5 @@
 <?php
+
 namespace Snappy\Util;
 
 class editor {
@@ -59,7 +60,7 @@ class editor {
         while (count($filtered) && trim($filtered[0]) === '') {
             array_shift($filtered);
         }
-        while (count($filtered) && trim($filtered[count($filtered)-1]) === '') {
+        while (count($filtered) && trim($filtered[count($filtered) - 1]) === '') {
             array_pop($filtered);
         }
         return trim(implode("\n", $filtered));

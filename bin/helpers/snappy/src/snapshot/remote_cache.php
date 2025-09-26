@@ -5,4 +5,5 @@
 
 namespace Snappy\Snapshot;
 
-class remote_cache {}
+class remote_cache {
+}

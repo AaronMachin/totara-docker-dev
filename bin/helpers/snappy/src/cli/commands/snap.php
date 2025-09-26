@@ -1,4 +1,5 @@
 <?php
+
 namespace Snappy\Cli\Commands;
 
 use Snappy\Cli\command;
@@ -7,8 +8,13 @@ use Snappy\Util\editor;
 use Throwable;
 
 class snap implements command {
-    public function name(): string { return 'snap'; }
-    public function description(): string { return 'Create a snapshot'; }
+    public function name(): string {
+        return 'snap';
+    }
+
+    public function description(): string {
+        return 'Create a snapshot';
+    }
 
     public function run(array $args, context $ctx): int {
         $type = 'sql';
