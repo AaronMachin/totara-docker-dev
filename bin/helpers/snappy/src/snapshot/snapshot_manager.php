@@ -51,7 +51,7 @@ class snapshot_manager {
     private function create_sql_backup(string $uid, array &$meta): void {
         $dir = $this->local_snapshot_dir($uid);
         $tdb = 'tdb';
-        $cmd = escapeshellcmd($tdb) . ' backup ' . escapeshellarg($uid) . ' > /dev/null 2>&1';
+        $cmd = escapeshellcmd($tdb) . ' backup --alias ' . escapeshellarg($uid) . ' > /dev/null 2>&1';
         system($cmd);
         $default_path = getenv('SNAPPY_TDB_BACKUP_PATH');
         if (!$default_path) {
