@@ -4,7 +4,7 @@ namespace Snappy\Cli\Commands;
 
 use Snappy\Cli\command;
 use Snappy\Cli\context;
-use Snappy\Util\remote_codec;
+use Snappy\Hosting\remote_codec;
 use Throwable;
 use RuntimeException;
 
