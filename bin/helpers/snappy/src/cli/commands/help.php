@@ -2,61 +2,51 @@
 
 namespace Snappy\Cli\Commands;
 
+use Snappy\Cli\base_command;
 use Snappy\Cli\command;
 use Snappy\Cli\context;
 
-class help implements command {
+class help extends base_command {
     private array $commands = [];
 
-    public function name(): string {
-        return 'help';
+    public function name(): string { return 'help'; }
+    public function description(): string { return 'Show help for all commands or a specific command'; }
+    public function usage(): string {
+        return "Usage:\n  tsnap help              Show list of commands\n  tsnap help <command>    Show detailed help for a command\n  tsnap <command> --help  Same as above";
     }
-
-    public function description(): string {
-        return 'Show help for all commands';
+    public function examples(): array {
+        return [
+            'tsnap help',
+            'tsnap help snap',
+        ];
     }
 
     public function set_commands(array $commands): void {
-        // Filter only command instances
         $out = [];
-        foreach ($commands as $k => $cmd) {
-            if ($cmd instanceof command) {
-                $out[$cmd->name()] = $cmd;
-            }
+        foreach ($commands as $cmd) {
+            if ($cmd instanceof command) { $out[$cmd->name()] = $cmd; }
         }
         ksort($out, SORT_STRING);
         $this->commands = $out;
     }
 
     public function run(array $args, context $ctx): int {
-        $this->print_usage();
+        $target = $args[0] ?? '';
+        if ($target !== '' && isset($this->commands[$target])) {
+            $this->commands[$target]->display_help();
+            return 0;
+        }
+        if ($target !== '' && !isset($this->commands[$target])) {
+            fwrite(STDERR, "unknown command: $target\n\n");
+        }
+        $this->printOverview();
         return 0;
     }
 
-    private function print_usage(): void {
-        $lines = [];
-        $max = 0;
-        foreach ($this->commands as $cmd) {
-            $n = $cmd->name();
-            $max = max($max, strlen($n));
-        }
-        echo "tsnap snapshot service\n\nCommands:\n";
-        foreach ($this->commands as $cmd) {
-            $name = $cmd->name();
-            $desc = $cmd->description();
-            printf("  %-{$max}s  %s\n", $name, $desc);
-        }
-        echo "\nUsage examples:\n";
-        echo "  tsnap snap -m 'before upgrade'\n";
-        echo "  tsnap push a1b2c3 origin\n";
-        echo "  tsnap pull a1b2c3 origin\n";
-        echo "  tsnap pull --encoded ENCODED_STR a1b2c3\n";
-        echo "  tsnap host --bucket=mybucket --port=8000\n";
-        echo "  tsnap list --full --remote=origin --limit=20\n";
-        echo "  tsnap remote list\n";
-        echo "  tsnap remote add origin s3 --endpoint=https://s3.example --bucket=mybucket --region=us-east-1 --key=AKIA... --secret=...\n";
-        echo "  tsnap remote remove origin\n";
-        echo "\nSet SNAPPY_SNAPSHOT_ROOT to change local snapshot root.\n";
-        echo "Ephemeral sharing: run 'tsnap host', share the encoded string with 'tsnap pull --encoded <str> <uid>'.\n";
+    private function printOverview(): void {
+        $max = 0; foreach ($this->commands as $cmd) { $max = max($max, strlen($cmd->name())); }
+        echo "tsnap snapshot service\n\n";
+        echo rtrim($this->usage()) . "\n\nCommands:\n";
+        foreach ($this->commands as $cmd) { printf("  %-{$max}s  %s\n", $cmd->name(), $cmd->description()); }
     }
 }

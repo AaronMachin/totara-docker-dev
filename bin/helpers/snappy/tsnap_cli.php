@@ -63,5 +63,19 @@ if (!isset($commands[$cmd])) {
     exit(1);
 }
 array_shift($argv); // remove command token
+
+// Support tsnap <command> --help / -h
+foreach ($argv as $v) {
+    if ($v === '--help' || $v === '-h') {
+        if (method_exists($commands[$cmd], 'display_help')) {
+            $commands[$cmd]->display_help();
+            echo "\n"; // final newline
+        } else {
+            echo $commands[$cmd]->usage() . "\n"; // fallback
+        }
+        exit(0);
+    }
+}
+
 $exit = $commands[$cmd]->run($argv, $ctx);
 exit($exit);
