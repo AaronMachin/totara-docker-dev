@@ -45,11 +45,13 @@ class share implements command {
         echo ($newlyStarted?"Host started in background\n":"Host already running\n");
         echo "Endpoint: $endpoint\n";
         echo "Encoded remote: $encoded\n";
-        echo "Pull command (copy/paste): tsnap pull --encoded=$encoded $resolved\n";
         $k = $state['options']['key'] ?? ''; $s = $state['options']['secret'] ?? '';
         if ($k !== '' && $s !== '') { echo "(Warning: encoded string contains credentials; treat as secret)\n"; }
         else { echo "(Anonymous mode: no credentials embedded)\n"; }
         echo "Use 'tsnap host logs' to follow tunnel output, 'tsnap host stop' to terminate.\n";
+        echo "\n";
+        echo "Share command (copy/paste):\n";
+        echo "tsnap pull --encoded=$encoded $resolved\n";
         return 0;
     }
 

@@ -58,7 +58,7 @@ class host implements command {
         echo "endpoint: {$state['endpoint']}\n";
         try { $encoded = $manager->buildEncodedRemote($state); echo "encoded: $encoded\n"; }
         catch (Throwable $e) { fwrite(STDERR, 'encode failed: '.$e->getMessage()."\n"); }
-        echo "pull example: tsnap pull --encoded $encoded <SNAPSHOT_UID>\n";
+        echo "Pull example: tsnap pull --encoded=$encoded <SNAPSHOT_UID>\n";
         echo "Use 'tsnap host logs' to follow ngrok output, 'tsnap host stop' to terminate.\n";
         return 0;
     }

@@ -128,14 +128,11 @@ class manager {
         if (!is_file($file)) { echo "No log file yet (start host first)\n"; return; }
         $fp = fopen($file, 'r');
         if (!$fp) { echo "Cannot open log file"; return; }
-        // Seek to end for live follow
-        fseek($fp, 0, SEEK_END);
         echo "Streaming ngrok logs (Ctrl+C to stop) ...\n";
-        while (true) {
-            $line = fgets($fp);
-            if ($line === false) { clearstatcache(); usleep(200000); continue; }
+
+        $printLine = function(string $line) {
             $line = trim($line);
-            if ($line === '') continue;
+            if ($line === '') return;
             $data = json_decode($line, true);
             if (is_array($data)) {
                 $msg = $data['msg'] ?? ($data['url'] ?? '');
@@ -143,6 +140,33 @@ class manager {
             } else {
                 echo $line . "\n";
             }
+            if (function_exists('ob_flush')) { @ob_flush(); }
+            @flush();
+        };
+
+        // Print existing content first (tail -f style but including history)
+        while (($line = fgets($fp)) !== false) { $printLine($line); }
+        $pos = ftell($fp);
+
+        while (true) {
+            $line = fgets($fp);
+            if ($line === false) {
+                clearstatcache(false, $file);
+                // Detect truncation/rotation
+                $size = @filesize($file);
+                if ($size !== false && $size < $pos) {
+                    // Reopen from beginning
+                    @fclose($fp);
+                    $fp = @fopen($file, 'r');
+                    if ($fp) { $pos = 0; }
+                    usleep(200000); // wait a bit
+                    continue;
+                }
+                usleep(200000); // sleep then retry
+                continue;
+            }
+            $printLine($line);
+            $pos = ftell($fp);
         }
     }
 
@@ -166,4 +190,3 @@ class manager {
         return remote_codec::encode($payload);
     }
 }
-
