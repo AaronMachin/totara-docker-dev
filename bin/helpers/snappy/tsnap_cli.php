@@ -12,8 +12,9 @@ use Snappy\Cli\context;
 use Snappy\Cli\command;
 
 // Build core context (multi-remote). Local remote always present.
-$base = getenv('SNAPPY_SNAPSHOT_ROOT') ?: (getenv('HOME') . '/.snappy');
-$remoteRegistry = new remote_registry($base);
+$snapshotBase = getenv('SNAPPY_SNAPSHOT_ROOT') ?: (getenv('HOME') . '/.snappy');
+$configDir = __DIR__; // always use project snappy dir for config.json
+$remoteRegistry = new remote_registry($snapshotBase, $configDir);
 $manager = new snapshot_manager($remoteRegistry);
 $ctx = new context($remoteRegistry, $manager);
 

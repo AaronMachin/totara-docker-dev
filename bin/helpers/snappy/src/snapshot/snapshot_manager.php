@@ -98,6 +98,129 @@ class snapshot_manager {
         return $rows;
     }
 
+    public function list_multi(array $remotes, bool $full = false, int $limit = 100, bool $parallel = true): array {
+        $aggregate = [];
+        $tasks = [];
+        $can_parallel = $parallel && function_exists('pcntl_fork') && function_exists('posix_getpid');
+        if ($can_parallel) {
+            // Spawn child per remote
+            foreach ($remotes as $remote) {
+                if (!is_string($remote) || $remote === '' || !$this->registry->has($remote)) { continue; }
+                $tasks[] = $remote;
+            }
+            $temp_dir = sys_get_temp_dir();
+            $children = [];
+            foreach ($tasks as $remote) {
+                $pid = pcntl_fork();
+                if ($pid === -1) { $can_parallel = false; break; }
+                if ($pid === 0) {
+                    // Child
+                    $result = $this->scan_remote_for_rows($remote, $full, $limit);
+                    $file = $temp_dir . '/snappy_list_' . getmypid() . '.json';
+                    @file_put_contents($file, json_encode($result));
+                    exit(0);
+                } else {
+                    $children[$pid] = $remote;
+                }
+            }
+            if ($can_parallel) {
+                // Wait children
+                foreach ($children as $pid => $_r) {
+                    pcntl_waitpid($pid, $status);
+                    $file = $temp_dir . '/snappy_list_' . $pid . '.json';
+                    if (is_file($file)) {
+                        $data = @json_decode(@file_get_contents($file), true);
+                        @unlink($file);
+                        if (is_array($data)) { $this->merge_rows_into_aggregate($aggregate, $data); }
+                    }
+                }
+            }
+        }
+        if (!$can_parallel) {
+            // Sequential fallback or initial strategy
+            foreach ($remotes as $remote) {
+                if (!is_string($remote) || $remote === '' || !$this->registry->has($remote)) { continue; }
+                $rows = $this->scan_remote_for_rows($remote, $full, $limit);
+                $this->merge_rows_into_aggregate($aggregate, $rows);
+            }
+        }
+        // Build rows
+        $rows = [];
+        foreach ($aggregate as $uid => $info) {
+            $rows[] = [
+                'uid' => $info['uid'],
+                'created' => $info['created'],
+                'type' => $info['type'],
+                'message' => $info['message'],
+                'locations' => implode(', ', array_values($info['locations'])),
+            ];
+        }
+        usort($rows, function ($a, $b) { return strcmp($b['created'], $a['created']); });
+        if (count($rows) > $limit) { $rows = array_slice($rows, 0, $limit); }
+        return $rows;
+    }
+
+    private function scan_remote_for_rows(string $remote, bool $full, int $limit): array {
+        $out = [];
+        try {
+            $storage = $this->registry->storage($remote);
+            $objects = $storage->list_objects('snaps/', $limit * 20);
+        } catch (\Throwable $e) { return $out; }
+        $metaKeys = [];
+        foreach ($objects as $o) {
+            $key = $o['key'];
+            if (preg_match('#^snaps/([^/]+)/meta\.json$#', $key, $m)) {
+                $uid = $m[1];
+                $metaKeys[$uid] = $key;
+            }
+        }
+        foreach ($metaKeys as $uid => $k) {
+            $meta = $this->read_meta($remote, $uid);
+            if (!$meta) { continue; }
+            $message = (string)($meta['message'] ?? '');
+            if (!$full) {
+                $message = preg_split('/\r?\n/', $message, 2)[0] ?? '';
+            } else {
+                $message = preg_replace('/\r?\n+/', ' | ', $message);
+            }
+            $out[] = [
+                'uid' => $uid,
+                'created' => $meta['created'] ?? '',
+                'type' => $meta['type'] ?? '',
+                'message' => $message,
+                'remote' => $remote,
+            ];
+        }
+        return $out;
+    }
+
+    private function merge_rows_into_aggregate(array &$aggregate, array $rows): void {
+        foreach ($rows as $row) {
+            $uid = $row['uid'];
+            $remote = $row['remote'];
+            if (!isset($aggregate[$uid])) {
+                $aggregate[$uid] = [
+                    'uid' => $uid,
+                    'created' => $row['created'],
+                    'type' => $row['type'],
+                    'message' => $row['message'],
+                    'locations' => [$remote],
+                    '_preferred_source' => $remote === 'local' ? 'local' : $remote,
+                ];
+            } else {
+                if (!in_array($remote, $aggregate[$uid]['locations'], true)) {
+                    $aggregate[$uid]['locations'][] = $remote;
+                }
+                if ($aggregate[$uid]['_preferred_source'] !== 'local' && $remote === 'local') {
+                    $aggregate[$uid]['created'] = $row['created'] ?: $aggregate[$uid]['created'];
+                    $aggregate[$uid]['type'] = $row['type'] ?: $aggregate[$uid]['type'];
+                    $aggregate[$uid]['message'] = $row['message'];
+                    $aggregate[$uid]['_preferred_source'] = 'local';
+                }
+            }
+        }
+    }
+
     public function resolve_uid(string $partial, string $remote = 'local'): string {
         $partial = trim($partial);
         if ($partial === '') { return ''; }
