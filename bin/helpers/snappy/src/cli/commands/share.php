@@ -138,7 +138,16 @@ class share extends base_command {
         // Build presigned URL using external endpoint
         $expirySeconds = (int)$ctx->config->get('options.presign_default_expiry_seconds', 1800);
         $expiresAt = time() + $expirySeconds; // still show to user, but not embedded
-        $presigned = \Snappy\Util\presign::s3_get($externalEndpoint, $opts->bucket, $objectKey, $opts->region ?: 'us-east-1', $opts->key, $opts->secret, $expirySeconds);
+        $presigned = \Snappy\Util\presign::s3_get_with_fallback(
+            $externalEndpoint,
+            $opts->bucket,
+            $objectKey,
+            $opts->region ?: 'us-east-1',
+            $opts->key,
+            $opts->secret,
+            $expirySeconds,
+            (bool)$ctx->config->get('options.debug', false) || getenv('SNAPPY_PRESIGN_DEBUG') !== false
+        );
         $grace = (int)$ctx->config->get('options.presign_cleanup_grace_seconds', 600);
         // Try prune (best effort, do not block share)
         try { $this->pruneOldShares($storage, $opts->bucket, $expirySeconds, $grace); } catch (\Throwable $e) { /* ignore */ }
