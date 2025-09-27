@@ -59,6 +59,16 @@
       "description": "Default S3 debug flag",
       "default": false,
       "required": false
+    },
+    "options.presign_default_expiry_seconds": {
+      "description": "Default expiry (seconds) for presigned snapshot share URLs",
+      "default": 1800,
+      "required": true
+    },
+    "options.presign_cleanup_grace_seconds": {
+      "description": "Additional grace seconds after expiry before old share objects are purged",
+      "default": 600,
+      "required": true
     }
   }
 }

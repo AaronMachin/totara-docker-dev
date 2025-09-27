@@ -372,4 +372,16 @@ class s3_storage implements storage {
         }
         return $key;
     }
+
+    public function delete_object(string $key): void {
+        // S3 DELETE returns 204/200 on success
+        try {
+            $this->request('DELETE', $key);
+        } catch (RuntimeException $e) {
+            // Swallow not found errors; rethrow others
+            if (stripos($e->getMessage(), 'NoSuchKey') === false && stripos($e->getMessage(), '404') === false) {
+                throw $e;
+            }
+        }
+    }
 }

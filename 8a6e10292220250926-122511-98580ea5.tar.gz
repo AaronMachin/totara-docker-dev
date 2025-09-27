@@ -1,0 +1,2 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Error><Code>AuthorizationQueryParametersError</Code><Message>Error parsing the X-Amz-Credential parameter; the Credential is mal-formed; expecting &#34;&lt;YOUR-AKID&gt;/YYYYMMDD/REGION/SERVICE/aws4_request&#34;.</Message><Key>shares/8a6e10292220250926-122511-98580ea5.tar.gz</Key><BucketName>snappy</BucketName><Resource>/snappy/shares/8a6e10292220250926-122511-98580ea5.tar.gz</Resource><RequestId>186942FC2DBA5D3B</RequestId><HostId>dd9025bab4ad464b049177c95eb6ebf374d3b3fd1af9251148b658df7ac2e3e8</HostId></Error>

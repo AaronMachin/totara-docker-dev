@@ -437,4 +437,6 @@ class snapshot_manager {
         $file = $this->local_snapshot_dir($uid) . '/meta.json';
         file_put_contents($file, json_encode($meta, JSON_PRETTY_PRINT));
     }
+
+    public function local_path(string $uid): string { return $this->registry->local_base_path() . '/snaps/' . $uid; }
 }

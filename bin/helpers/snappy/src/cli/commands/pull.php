@@ -18,48 +18,22 @@ class pull extends base_command {
     }
 
     public function usage(): string {
-        return 'Usage: tsnap pull <uid|prefix> [--remote=name]|[--encoded=STR] [--force] [--keep-remote]\nRetrieve snapshot from a remote into local storage. --encoded supplies a temporary remote descriptor.';
+        return 'Usage: tsnap pull [<uid|prefix>] [--remote=name]|[--share=TOKEN] [--force] [--keep-remote]\nPull from remote or download presigned share token.';
     }
 
     public function examples(): array {
-        return ['tsnap pull abc123 --remote=origin', 'tsnap pull --encoded=ENCODED_STR f00ba4', 'tsnap pull 1a2b3c', 'tsnap pull abc --remote=enc_deadbeef'];
+        return ['tsnap pull --share=TOKEN', 'tsnap pull abc123 --remote=origin', 'tsnap pull --share=TOKEN --force'];
     }
 
     public function run(array $args, context $ctx): int {
         [$opts, $positionals, $errors] = $this->parsePullArgs($args);
-        if ($errors) {
-            foreach ($errors as $e) {
-                fwrite(STDERR, $e . "\n");
-            }
-            return 1;
-        }
-        $token = $positionals[0] ?? '';
-        if ($token === '') {
-            fwrite(STDERR, "snapshot uid or unique prefix required\n");
-            return 1;
-        }
-        $remoteOpt = $opts['remote'];
-        $encodedStr = $opts['encoded'];
+        if ($errors) { foreach ($errors as $e) { fwrite(STDERR, $e."\n"); } return 1; }
+        $shareToken = $opts['share'];
         $force = $opts['force'];
-        $keepRemote = $opts['keep'];
-
-        // encoded remote handling (may register temp remote)
-        if ($encodedStr !== null) {
-            $res = $this->registerEncodedRemote($encodedStr, $remoteOpt, $ctx);
-            if ($res['error']) {
-                fwrite(STDERR, $res['error'] . "\n");
-                return $res['code'];
-            }
-            $remoteOpt = $res['remote'];
-            $temp = $res['temp'];
-        } else {
-            $temp = null;
-        }
-
-        if ($remoteOpt !== null) {
-            return $this->pullFromSpecificRemote($token, $remoteOpt, $force, $keepRemote, $temp, $ctx);
-        }
-        return $this->pullByScanningRemotes($token, $force, $ctx);
+        if ($shareToken !== null) { return $this->pullFromShareToken($shareToken, $force, $ctx); }
+        $token = $positionals[0] ?? '';
+        if ($token === '') { fwrite(STDERR, "--share=TOKEN required (legacy pull by uid removed in this mode)\n"); return 1; }
+        fwrite(STDERR, "Direct UID/remote pulls disabled (use --share).\n"); return 2;
     }
 
     private function parsePullArgs(array $argv): array {
@@ -67,113 +41,75 @@ class pull extends base_command {
             'force' => ['flags' => ['--force'], 'type' => 'bool', 'default' => false],
             'keep' => ['flags' => ['--keep-remote'], 'type' => 'bool', 'default' => false],
             'remote' => ['prefix' => '--remote=', 'type' => 'string', 'default' => null],
-            'encoded' => ['prefix' => '--encoded=', 'type' => 'string', 'default' => null],
+            'share' => ['prefix' => '--share=', 'type' => 'string', 'default' => null],
         ];
         $parsed = $this->parseArgs($argv, $def);
         return [$parsed['options'], $parsed['positionals'], $parsed['errors']];
     }
 
-    private function registerEncodedRemote(string $encoded, ?string $remoteOpt, context $ctx): array {
-        if ($remoteOpt !== null) {
-            return ['error' => '--remote and --encoded are mutually exclusive', 'code' => 1];
-        }
-        try {
-            $decoded = remote_codec::decode($encoded);
-        } catch (RuntimeException $e) {
-            return ['error' => 'decode failed: ' . $e->getMessage(), 'code' => 2];
-        }
-        foreach (['t', 'e', 'b', 'r', 's', 'k'] as $r) {
-            if (!isset($decoded[$r]) || $decoded[$r] === '') {
-                return ['error' => "encoded remote missing field: $r", 'code' => 2];
+    private function pullFromShareToken(string $token, bool $force, context $ctx): int {
+        try { $decoded = remote_codec::decode($token); }
+        catch (RuntimeException $e) { fwrite(STDERR,'decode failed: '.$e->getMessage()."\n"); return 2; }
+        if (($decoded['t'] ?? '') !== 'ps' || empty($decoded['u']) || empty($decoded['x'])) { fwrite(STDERR,'invalid share token (expected fields t=ps,u,x)\n'); return 2; }
+        if ((int)$decoded['x'] < time()) { fwrite(STDERR,'share token expired\n'); return 2; }
+        $url = $decoded['u'];
+        $tmp = sys_get_temp_dir().'/snappy_dl_'.bin2hex(random_bytes(4)).'.tar.gz';
+        $fh = fopen($tmp,'w'); if(!$fh){ fwrite(STDERR,'temp file open failed\n'); return 2; }
+        $isTTY = function_exists('posix_isatty') ? @posix_isatty(STDOUT) : true;
+        $start = microtime(true);
+        $lastDraw = 0.0;
+        $spinner = ['⠋','⠙','⠸','⠼','⠴','⠦','⠇','⠏'];
+        $spinIdx = 0;
+        $barWidth = 34;
+        $human = function(float $bytes): string {
+            $u=['B','KB','MB','GB','TB']; $i=0; while($bytes>=1024 && $i<count($u)-1){$bytes/=1024;$i++;} return sprintf('%0.2f %s',$bytes,$u[$i]); };
+        $draw = function($downloaded,$total) use (&$lastDraw,$start,&$spinIdx,$spinner,$barWidth,$human,$isTTY){
+            $now = microtime(true);
+            if(($now - $lastDraw) < 0.05 && $total>0) return; // limit redraw
+            $lastDraw = $now;
+            $elapsed = $now - $start;
+            $rate = $elapsed>0 ? $downloaded / $elapsed : 0; // bytes/sec
+            $eta = ($total>0 && $rate>0) ? ($total - $downloaded)/$rate : 0;
+            $pct = ($total>0) ? ($downloaded/$total) : 0;
+            $filled = (int)round($pct*$barWidth);
+            $spin = $spinner[$spinIdx++ % count($spinner)];
+            $bar = str_repeat('█',$filled).str_repeat('·', max(0,$barWidth-$filled));
+            $pctTxt = $total>0 ? sprintf('%5.1f%%',$pct*100) : '  ??%';
+            $speedTxt = $rate>0 ? $human($rate).'/s' : '--';
+            $etaTxt = $total>0 && $rate>0 ? sprintf('ETA %ss', max(0,(int)$eta)) : '';
+            if($isTTY){
+                $line = sprintf("\r %s [%s] %s %s/%s %s", $spin, $bar, $pctTxt, $human($downloaded), $total>0?$human($total):'?', $speedTxt);
+                if($etaTxt!=='') $line .= ' '.$etaTxt;
+                echo $line; fflush(STDOUT);
             }
-        }
-        if (($decoded['t'] ?? '') !== 's3') {
-            return ['error' => 'unsupported encoded remote type: ' . ($decoded['t'] ?? '') . '', 'code' => 2];
-        }
-        $endpoint = $decoded['e'];
-        if (!preg_match('~^https://~', $endpoint)) {
-            return ['error' => 'refusing non-https endpoint in encoded remote', 'code' => 2];
-        }
-        $remoteConfig =
-            ['endpoint' => $endpoint, 'bucket' => $decoded['b'], 'region' => $decoded['r'], 'key' => $decoded['k'] ?? '', 'secret' => $decoded['s'] ?? '', 'path_style' => true];
-        $fingerprint = sha1(json_encode($remoteConfig, JSON_UNESCAPED_SLASHES));
-        $base = 'enc_' . substr($fingerprint, 0, 8);
-        $name = $base;
-        $n = 1;
-        while ($ctx->registry->has($name)) {
-            try {
-                $ctx->registry->storage($name);
-                break;
-            } catch (Throwable $e) {
-                $name = $base . '_' . ($n++);
-            }
-        }
-        if (!$ctx->registry->has($name)) {
-            try {
-                $ctx->registry->add($name, 's3', $remoteConfig);
-            } catch (Throwable $e) {
-                return ['error' => 'failed to register ephemeral remote: ' . $e->getMessage(), 'code' => 2];
-            }
-            $temp = ['name' => $name, 'created' => true];
-        } else {
-            $temp = ['name' => $name, 'created' => false];
-        }
-        return ['remote' => $name, 'temp' => $temp, 'error' => null, 'code' => 0];
-    }
-
-    private function pullFromSpecificRemote(string $token, string $remote, bool $force, bool $keepRemote, ?array $temp, context $ctx): int {
-        if ($remote === 'local') {
-            fwrite(STDERR, "--remote cannot be 'local' (already local store)\n");
-            return 2;
-        }
-        if (!$ctx->registry->has($remote)) {
-            fwrite(STDERR, "unknown remote: $remote\n");
-            return 2;
-        }
-        try {
-            $uid = $ctx->manager->pull($token, $remote, $force);
-        } catch (Throwable $e) {
-            $this->cleanupTemp($temp, !$keepRemote, $ctx);
-            fwrite(STDERR, 'pull failed: ' . $e->getMessage() . "\n");
-            return 3;
-        }
-        echo "retrieved snapshot $uid from $remote into local\n";
-        $this->cleanupTemp($temp, !$keepRemote, $ctx);
-        return 0;
-    }
-
-    private function pullByScanningRemotes(string $token, bool $force, context $ctx): int {
-        $matches = [];
-        foreach ($ctx->registry->names() as $r) {
-            if ($r === 'local') {
-                continue;
-            }
-            $resolved = $ctx->manager->resolve_uid($token, $r);
-            if ($resolved !== '') {
-                $matches[$r] = $resolved;
-            }
-        }
-        if (!$matches) {
-            fwrite(STDERR, "no matching snapshot for prefix '$token' on any remote; specify --remote if needed\n");
-            return 4;
-        }
-        if (count($matches) > 1) {
-            $list = [];
-            foreach ($matches as $r => $u) {
-                $list[] = $r . '(' . $u . ')';
-            }
-            fwrite(STDERR, "ambiguous prefix '$token' found in multiple remotes: " . implode(', ', $list) . "\nSpecify --remote=<name>.\n");
-            return 5;
-        }
-        $remote = array_key_first($matches);
-        $uidFull = $matches[$remote];
-        try {
-            $uid = $ctx->manager->pull($uidFull, $remote, $force);
-        } catch (Throwable $e) {
-            fwrite(STDERR, 'pull failed: ' . $e->getMessage() . "\n");
-            return 3;
-        }
-        echo "retrieved snapshot $uid from $remote into local\n";
+        };
+        $ch = curl_init($url);
+        curl_setopt($ch, CURLOPT_FILE, $fh);
+        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+        curl_setopt($ch, CURLOPT_FAILONERROR, false);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 0); // allow large
+        curl_setopt($ch, CURLOPT_NOPROGRESS, false);
+        curl_setopt($ch, CURLOPT_PROGRESSFUNCTION, function($resource,$dltotal,$dlnow,$ultotal,$ulnow) use ($draw){ $draw($dlnow,$dltotal); });
+        $ok = curl_exec($ch);
+        $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        if ($ok === false || $status >= 400) { $err=curl_error($ch); curl_close($ch); fclose($fh); @unlink($tmp); if($isTTY) echo "\n"; fwrite(STDERR,'download failed status '.$status.' '.$err."\n"); return 3; }
+        curl_close($ch); fclose($fh);
+        if($isTTY){ $draw(filesize($tmp), filesize($tmp)); echo "\r ✔ Download complete                              \n"; }
+        // Determine snapshot UID from archive first entry
+        $cmdList = 'tar -tzf '.escapeshellarg($tmp).' 2>/dev/null | head -n1';
+        $first = trim(shell_exec($cmdList) ?? '');
+        if ($first === '') { @unlink($tmp); fwrite(STDERR,'archive empty or unreadable\n'); return 4; }
+        $uid = trim(explode('/', $first)[0]);
+        if ($uid === '') { @unlink($tmp); fwrite(STDERR,'could not determine snapshot uid from archive\n'); return 4; }
+        if (!$force && $ctx->manager->read_meta('local', $uid)) { @unlink($tmp); fwrite(STDERR,'snapshot already exists locally: '.$uid." (use --force to overwrite)\n"); return 5; }
+        $snapsBase = $ctx->registry->local_base_path().'/snaps';
+        if (!is_dir($snapsBase)) { @mkdir($snapsBase,0777,true); }
+        $cmdExtract = 'tar -xzf '.escapeshellarg($tmp).' -C '.escapeshellarg($snapsBase).' 2>&1';
+        $out=[]; $rc=0; exec($cmdExtract,$out,$rc);
+        @unlink($tmp);
+        if ($rc !== 0) { fwrite(STDERR,'extract failed rc='.$rc.' '.implode(' ',$out)."\n"); return 6; }
+        if (!$ctx->manager->read_meta('local',$uid)) { fwrite(STDERR,'error: meta.json not found after extract (snapshot incomplete)\n'); return 7; }
+        echo "retrieved snapshot $uid via share token into local\n";
         return 0;
     }
 
