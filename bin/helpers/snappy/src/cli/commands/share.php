@@ -4,6 +4,7 @@ namespace Snappy\Cli\Commands;
 
 use Snappy\Cli\base_command;
 use Snappy\Cli\context;
+use Snappy\Hosting\ngrok_provider;
 use Snappy\Hosting\options;
 use Snappy\Hosting\manager;
 use RuntimeException;
@@ -53,7 +54,7 @@ class share extends base_command {
             fwrite(STDERR, "no or ambiguous match for '$snapshotToken' (local snapshots)\n");
             return 1;
         }
-        $manager = new manager($ctx->registry->local_base_path());
+        $manager = new manager($ctx->registry->local_base_path(), new ngrok_provider());
         $newlyStarted = false;
         $state = null;
         if ($manager->isRunning()) {

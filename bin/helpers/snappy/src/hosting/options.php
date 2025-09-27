@@ -14,6 +14,7 @@ class options {
     public bool $detach = false;
     public bool $anon = false;
     public int $timeout = 15;
+    public string $provider = 'ngrok';
 
     public static function fromEnv(): self {
         $o = new self();
@@ -97,6 +98,10 @@ class options {
                 $o->anon = true;
                 continue;
             }
+            if (preg_match('~^--provider=(.+)~', $arg, $m)) {
+                $o->provider = strtolower($m[1]);
+                continue;
+            }
             $error = 'unknown option: ' . $arg;
             break;
         }
@@ -112,9 +117,8 @@ class options {
             return '--no-run requires --endpoint=<url>';
         }
         if ($this->detach && $this->endpoint === '') {
-            return '--detach currently requires --endpoint (cannot discover ngrok URL before backgrounding)';
+            return '--detach currently requires --endpoint (cannot discover tunnel URL before backgrounding)';
         }
         return null;
     }
 }
-

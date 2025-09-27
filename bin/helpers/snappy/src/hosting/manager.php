@@ -6,13 +6,13 @@ use RuntimeException;
 class manager {
     private string $root; // snapshot root
     private string $stateFile;
-    private string $logFile;
+    private ?provider $provider; // active provider (e.g. ngrok) or null for static endpoint
 
-    public function __construct(string $snapshotRoot) {
+    public function __construct(string $snapshotRoot, ?provider $provider = null) {
         $this->root = rtrim($snapshotRoot, '/');
         if (!is_dir($this->root)) { @mkdir($this->root, 0777, true); }
         $this->stateFile = $this->root . '/host_state.json';
-        $this->logFile = $this->root . '/host_ngrok.log';
+        $this->provider = $provider ?: new ngrok_provider();
     }
 
     public function state(): ?array {
@@ -25,11 +25,15 @@ class manager {
     public function isRunning(): bool {
         $s = $this->state();
         if (!$s) return false;
-        $pid = $s['pid'] ?? 0; if (!$pid) return false;
-        // posix_kill check if available
-        if (function_exists('posix_kill')) { return @posix_kill($pid, 0); }
-        // Fallback: /proc
-        return is_dir('/proc/' . $pid);
+        // Static endpoint (no provider process)
+        if (($s['provider'] ?? '') === 'static') {
+            return true; // treat as always available
+        }
+        $provState = $s['provider_state'] ?? $s; // backward compatibility
+        if ($this->provider && method_exists($this->provider, 'isRunning')) {
+            return $this->provider->isRunning($provState);
+        }
+        return false;
     }
 
     public function ensureRunning(options $opts): array {
@@ -48,54 +52,43 @@ class manager {
         if ($this->isRunning() && $forceRestart) {
             $this->stop();
         }
-        // remove stale state
         @unlink($this->stateFile);
-        if (is_file($this->logFile)) { @unlink($this->logFile); }
 
-        // Build command using nohup so it persists; we will poll logFile for endpoint.
-        $cmd = 'nohup ngrok http --log=stdout --log-format=json ' . escapeshellarg($opts->port) . ' > ' . escapeshellarg($this->logFile) . ' 2>&1 & echo $!';
-        $pid = trim(shell_exec($cmd));
-        if ($pid === '' || !ctype_digit($pid)) {
-            throw new RuntimeException('failed to launch ngrok process');
+        // Case: user supplied explicit endpoint (no tunnel process required)
+        if ($opts->endpoint !== '') {
+            $state = [
+                'provider' => 'static',
+                'provider_state' => [
+                    'endpoint' => rtrim($opts->endpoint, '/'),
+                    'started' => date('c'),
+                ],
+                'endpoint' => rtrim($opts->endpoint, '/'), // legacy convenience
+                'started' => date('c'),
+                'options' => $this->serializeOptions($opts),
+                'version' => 2,
+            ];
+            @file_put_contents($this->stateFile, json_encode($state, JSON_PRETTY_PRINT));
+            return $state;
         }
-        $pid = (int)$pid;
-        // Poll log for endpoint
-        $deadline = time() + $opts->timeout;
-        $endpoint = '';
-        while (time() < $deadline && $endpoint === '') {
-            if (is_file($this->logFile)) {
-                $lines = @file($this->logFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [];
-                foreach ($lines as $line) {
-                    $data = json_decode($line, true);
-                    if (!is_array($data)) continue;
-                    if (isset($data['url']) && str_starts_with($data['url'], 'https://')) {
-                        $endpoint = rtrim($data['url'], '/');
-                        break;
-                    }
-                }
-            }
-            if ($endpoint !== '') break;
-            usleep(200000);
+
+        if (!$this->provider) {
+            throw new RuntimeException('no provider available and no endpoint specified');
         }
+
+        $provState = $this->provider->start($opts, $this->root);
+        $endpoint = $provState['endpoint'] ?? '';
         if ($endpoint === '') {
-            // Could not determine endpoint, but process maybe alive.
-            $this->stop();
-            throw new RuntimeException('ngrok started but endpoint not discovered within timeout');
+            throw new RuntimeException('provider returned empty endpoint');
         }
         $state = [
-            'pid' => $pid,
+            'provider' => $this->provider->name(),
+            'provider_state' => $provState,
+            // flatten for backward compatibility
+            'pid' => $provState['pid'] ?? null,
             'endpoint' => $endpoint,
-            'started' => date('c'),
-            'options' => [
-                'bucket' => $opts->bucket,
-                'region' => $opts->region,
-                'key' => $opts->key,
-                'secret' => $opts->secret,
-                'prefix' => $opts->prefix,
-                'port' => $opts->port,
-                'anon' => $opts->anon,
-            ],
-            'version' => 1,
+            'started' => $provState['started'] ?? date('c'),
+            'options' => $this->serializeOptions($opts),
+            'version' => 2,
         ];
         @file_put_contents($this->stateFile, json_encode($state, JSON_PRETTY_PRINT));
         return $state;
@@ -104,10 +97,9 @@ class manager {
     public function stop(): void {
         $s = $this->state();
         if ($s) {
-            $pid = $s['pid'] ?? 0;
-            if ($pid) {
-                if (function_exists('posix_kill')) { @posix_kill((int)$pid, 15); }
-                else { @exec('kill ' . (int)$pid . ' >/dev/null 2>&1'); }
+            if (($s['provider'] ?? '') !== 'static') {
+                $provState = $s['provider_state'] ?? $s;
+                if ($this->provider) { $this->provider->stop($provState); }
             }
         }
         @unlink($this->stateFile);
@@ -117,64 +109,30 @@ class manager {
         $s = $this->state();
         if (!$s) return null;
         if (!$this->isRunning()) return null;
-        return $s['endpoint'] ?? null;
+        return $s['endpoint'] ?? ($s['provider_state']['endpoint'] ?? null);
     }
 
-    public function logFile(): string { return $this->logFile; }
-    public function stateFile(): string { return $this->stateFile; }
+    public function logFile(): ?string {
+        $s = $this->state();
+        if (!$s) return null;
+        $provState = $s['provider_state'] ?? $s;
+        return $provState['log_file'] ?? null;
+    }
 
     public function streamLogs(): void {
-        $file = $this->logFile;
-        if (!is_file($file)) { echo "No log file yet (start host first)\n"; return; }
-        $fp = fopen($file, 'r');
-        if (!$fp) { echo "Cannot open log file"; return; }
-        echo "Streaming ngrok logs (Ctrl+C to stop) ...\n";
-
-        $printLine = function(string $line) {
-            $line = trim($line);
-            if ($line === '') return;
-            $data = json_decode($line, true);
-            if (is_array($data)) {
-                $msg = $data['msg'] ?? ($data['url'] ?? '');
-                if ($msg !== '') { echo "[ngrok] $msg\n"; }
-            } else {
-                echo $line . "\n";
-            }
-            if (function_exists('ob_flush')) { @ob_flush(); }
-            @flush();
-        };
-
-        // Print existing content first (tail -f style but including history)
-        while (($line = fgets($fp)) !== false) { $printLine($line); }
-        $pos = ftell($fp);
-
-        while (true) {
-            $line = fgets($fp);
-            if ($line === false) {
-                clearstatcache(false, $file);
-                // Detect truncation/rotation
-                $size = @filesize($file);
-                if ($size !== false && $size < $pos) {
-                    // Reopen from beginning
-                    @fclose($fp);
-                    $fp = @fopen($file, 'r');
-                    if ($fp) { $pos = 0; }
-                    usleep(200000); // wait a bit
-                    continue;
-                }
-                usleep(200000); // sleep then retry
-                continue;
-            }
-            $printLine($line);
-            $pos = ftell($fp);
-        }
+        $s = $this->state();
+        if (!$s) { echo "No state file (start host first)\n"; return; }
+        if (($s['provider'] ?? '') === 'static') { echo "Static endpoint provider: no logs available\n"; return; }
+        $provState = $s['provider_state'] ?? $s;
+        if ($this->provider) { $this->provider->streamLogs($provState); return; }
+        echo "No provider available to stream logs\n";
     }
 
     public function buildEncodedRemote(?array $state = null): string {
         $s = $state ?: $this->state();
         if (!$s) throw new RuntimeException('host not running');
         if (!$this->isRunning()) throw new RuntimeException('host process not active');
-        $endpoint = $s['endpoint'] ?? '';
+        $endpoint = $s['endpoint'] ?? ($s['provider_state']['endpoint'] ?? '');
         if ($endpoint === '') throw new RuntimeException('state missing endpoint');
         $opts = $s['options'] ?? [];
         $payload = [
@@ -188,5 +146,17 @@ class manager {
         $p = $opts['prefix'] ?? '';
         if ($p !== '') { $payload['p'] = $p; }
         return remote_codec::encode($payload);
+    }
+
+    private function serializeOptions(options $opts): array {
+        return [
+            'bucket' => $opts->bucket,
+            'region' => $opts->region,
+            'key' => $opts->key,
+            'secret' => $opts->secret,
+            'prefix' => $opts->prefix,
+            'port' => $opts->port,
+            'anon' => $opts->anon,
+        ];
     }
 }
