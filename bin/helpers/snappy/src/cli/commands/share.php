@@ -76,6 +76,21 @@ class share extends base_command {
         if ($err = $opts->normalize()) { fwrite(STDERR, $err."\n"); return 1; }
         $resolved = $ctx->manager->resolve_uid($snapshotToken, 'local');
         if ($resolved === '') { fwrite(STDERR, "no or ambiguous match for '$snapshotToken' (local snapshots)\n"); return 1; }
+        // Derive bucket & creds from configured default remote if user used default bucket value
+        $cfgAll = $ctx->config->all();
+        $defaultRemote = $cfgAll['options']['default_remote'] ?? null;
+        if ($defaultRemote && isset($cfgAll['remotes'][$defaultRemote])) {
+            $r = $cfgAll['remotes'][$defaultRemote];
+            if (($r['type'] ?? '') === 's3') {
+                $rcfg = $r['config'] ?? [];
+                $configuredBucket = $rcfg['bucket'] ?? '';
+                // If user didn't override (still initial 'snappy') and configured bucket differs
+                if ($configuredBucket !== '' && $opts->bucket === 'snappy') { $opts->bucket = $configuredBucket; }
+                if ($opts->key === '') { $opts->key = $rcfg['key'] ?? $opts->key; }
+                if ($opts->secret === '') { $opts->secret = $rcfg['secret'] ?? $opts->secret; }
+                if ($opts->region === '' && !empty($rcfg['region'])) { $opts->region = $rcfg['region']; }
+            }
+        }
         // ---- Credential fallback (must happen before upload/presign) ----
         if ($opts->key === '') {
             $opts->key = getenv('MINIO_ROOT_USER')
