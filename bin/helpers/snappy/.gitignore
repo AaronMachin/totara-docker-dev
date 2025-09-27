@@ -1,1 +1,4 @@
 config.json
+vendor/
+.phpunit.cache/
+coverage/

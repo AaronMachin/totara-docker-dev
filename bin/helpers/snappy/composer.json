@@ -1,0 +1,31 @@
+{
+  "name": "snappy/snappy",
+  "description": "Snappy snapshot service (rewrite) - local-first snapshot capture, listing, sharing CLI.",
+  "type": "project",
+  "license": "MIT",
+  "minimum-stability": "stable",
+  "require": {
+    "php": ">=8.1"
+  },
+  "require-dev": {
+    "phpunit/phpunit": "^10.5"
+  },
+  "autoload": {
+    "psr-4": {
+      "Snappy\\": "src/"
+    }
+  },
+  "autoload-dev": {
+    "psr-4": {
+      "Snappy\\Tests\\": "tests/"
+    }
+  },
+  "scripts": {
+    "test": "vendor/bin/phpunit",
+    "test:verbose": "vendor/bin/phpunit -v"
+  },
+  "config": {
+    "sort-packages": true,
+    "preferred-install": "dist"
+  }
+}

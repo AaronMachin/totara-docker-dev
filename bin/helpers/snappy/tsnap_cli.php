@@ -4,7 +4,15 @@
  * Usage executed via bin/snappy wrapper.
  */
 
-require_once __DIR__ . '/snappy_autoload.php';
+$composerAutoload = __DIR__ . '/vendor/autoload.php';
+if (file_exists($composerAutoload)) {
+    require_once $composerAutoload;
+    // Include legacy autoloader too (temporary) because current directory/file casing is lowercase
+    // and does not fully conform to PSR-4 expectations. This preserves functionality until T1.2.
+    require_once __DIR__ . '/snappy_autoload.php';
+} else {
+    require_once __DIR__ . '/snappy_autoload.php';
+}
 
 use Snappy\Cli\context;
 use Snappy\Snapshot\remote_registry;
