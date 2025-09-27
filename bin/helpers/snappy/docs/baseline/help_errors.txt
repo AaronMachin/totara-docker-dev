@@ -1,0 +1,19 @@
+unknown command: frob
+
+tsnap snapshot service
+
+Usage:
+  tsnap help              Show list of commands
+  tsnap help <command>    Show detailed help for a command
+  tsnap <command> --help  Same as above
+
+Commands:
+  fetch   Fetch (refresh) remote snapshot metadata cache
+  help    Show help for all commands or a specific command
+  host    Manage background snapshot hosting tunnel (start/status/logs/stop)
+  list    List snapshots
+  pull    Retrieve a snapshot from a remote into local storage
+  push    Push a local snapshot to a remote: push <uid|prefix> [remote]
+  remote  Manage snapshot remotes (list, add, remove)
+  share   Share a local snapshot by ensuring a background host is running and printing a pull command
+  snap    Create a snapshot

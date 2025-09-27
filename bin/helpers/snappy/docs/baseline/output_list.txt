@@ -1,0 +1,5 @@
+Snapshots (cached remotes: hosted_s3[56m ago])
+Stale caches: hosted_s3. Refresh with: tsnap fetch --stale-only --remote=hosted_s3
+UID                                 CREATED                    TYPE  LOCATIONS         MESSAGE
+8a6e10292220250926-122511-98580ea5  2025-09-26T12:25:11+00:00  sql   local, hosted_s3  Hey Cam
+1f9db2adb020250926-060950-679b0470  2025-09-26T06:09:50+00:00  sql   hosted_s3         my really cool snap
