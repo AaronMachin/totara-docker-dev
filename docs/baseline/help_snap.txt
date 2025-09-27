@@ -1,0 +1,8 @@
+Create a snapshot
+
+Usage: tsnap snap [-m <message>] [--type=sql]\nCreates a snapshot. If -m omitted an editor will open.
+
+Examples:
+  tsnap snap -m "initial load"
+  tsnap snap --type=sql -m "before upgrade"
+

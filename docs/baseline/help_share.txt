@@ -1,0 +1,10 @@
+Share a local snapshot by ensuring a background host is running and printing a pull command
+
+Usage: tsnap share <uid|prefix> [--bucket=NAME --region=REG --port=8000 --key=K --secret=S] [--prefix=P] [--endpoint=URL] [--timeout=SEC]
+Packages snapshot, uploads, presigns and prints pull command (use with tsnap pull --share=TOKEN).
+
+Examples:
+  tsnap share 7fa12c3
+  tsnap share --endpoint=https://example.ngrok-free.app 7fa12c3
+  tsnap share --bucket=mybucket --region=us-east-1 --port=9000 7fa12c3
+

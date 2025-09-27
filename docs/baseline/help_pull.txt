@@ -1,0 +1,9 @@
+Retrieve a snapshot from a remote into local storage
+
+Usage: tsnap pull [<uid|prefix>] [--remote=name]|[--share=TOKEN] [--force] [--keep-remote]\nPull from remote or download presigned share token.
+
+Examples:
+  tsnap pull --share=TOKEN
+  tsnap pull abc123 --remote=origin
+  tsnap pull --share=TOKEN --force
+

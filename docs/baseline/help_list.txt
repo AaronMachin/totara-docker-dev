@@ -1,0 +1,11 @@
+List snapshots
+
+Usage: tsnap list [--full|--full-message] [--limit=N] [--remote=name1,name2] [--since=EXPR] [--before=EXPR] [--no-parallel] [--live]
+List snapshots across selected remotes. --since/--before accept strtotime expressions or relative (10m,2h,3d). Use --live to bypass cache.
+
+Examples:
+  tsnap list
+  tsnap list --full --limit=20
+  tsnap list --remote=origin,backup --since=2d
+  tsnap list --live --remote=origin
+

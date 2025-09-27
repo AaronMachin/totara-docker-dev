@@ -1,0 +1,11 @@
+Show help for all commands or a specific command
+
+Usage:
+  tsnap help              Show list of commands
+  tsnap help <command>    Show detailed help for a command
+  tsnap <command> --help  Same as above
+
+Examples:
+  tsnap help
+  tsnap help snap
+

@@ -1,0 +1,12 @@
+{
+    "uid": "sample-uid-1759015247",
+    "created": "2025-09-27T23:20:47Z",
+    "type": "manual",
+    "message": "Fabricated sample snapshot metadata (DB tooling unavailable)",
+    "files": [
+        "dump.sql"
+    ],
+    "file_checksums": {
+        "dump.sql": "sha256:placeholder"
+    }
+}
