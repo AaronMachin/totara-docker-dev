@@ -8,6 +8,8 @@ use Snappy\Support\Exception\SnapshotNotFoundException;
 use Snappy\Support\Exception\RemoteException;
 use Snappy\Support\Exception\ProcessFailedException;
 use Throwable;
+use Snappy\Support\Process\process_runner; // updated
+use Snappy\Util\env;
 
 class snapshot_manager {
     private remote_registry $registry;
@@ -51,9 +53,19 @@ class snapshot_manager {
 
     private function create_sql_backup(string $uid, array &$meta): void {
         $dir = $this->local_snapshot_dir($uid);
-        $tdb = 'tdb';
-        $cmd = escapeshellcmd($tdb) . ' backup --alias ' . escapeshellarg($uid) . ' > /dev/null 2>&1';
-        system($cmd);
+        $tdb = trim(env::get('SNAPPY_TDB_BIN', 'tdb')) ?: 'tdb';
+        $command = [$tdb, 'backup', '--alias', $uid];
+        $runner = new process_runner();
+        $result = $runner->run($command);
+        if ($result->exitCode !== 0) {
+            $lines = preg_split('/\r?\n/', $result->stderr); $lines = $lines === false ? [] : $lines;
+            $first = array_slice($lines, 0, 10);
+            $truncatedMsg = implode("\n", $first);
+            if (count($lines) > 10) { $truncatedMsg .= "\n... (stderr truncated)"; }
+            $msg = 'Database backup process failed (exit code ' . $result->exitCode . ") for alias $uid";
+            if ($truncatedMsg !== '') { $msg .= ":\n" . $truncatedMsg; }
+            throw new ProcessFailedException($msg, $result);
+        }
         // Use configured backup path with schema-applied default
         $config = $this->registry->config_manager()->all();
         $default_path = $config['options']['backup_path'] ?? '';
