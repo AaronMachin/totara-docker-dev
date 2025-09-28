@@ -46,7 +46,7 @@ abstract class InProcessCliTestCase extends TestCase {
     protected function buildRouter(): command_router {
         // Fallback require for command classes if autoloader missed them (CI edge cases)
         $cmdDir = __DIR__ . '/../../src/cli/commands';
-        $needed = ['snapshot_create','snapshot_list','snapshot_show','snapshot_tag','share_create','share_list','share_fetch','prune_run','verify_run','gc_objects','config_get','config_set','remote_list','remote_add','remote_remove','doctor_run'];
+        $needed = ['snapshot_create','snapshot_list','snapshot_show','snapshot_tag','snapshot_metrics','share_create','share_list','share_fetch','prune_run','verify_run','gc_objects','config_get','config_set','remote_list','remote_add','remote_remove','doctor_run'];
         foreach ($needed as $n) {
             $fq = 'Snappy\\Cli\\Commands\\' . $n;
             if (!class_exists($fq)) {
@@ -59,6 +59,7 @@ abstract class InProcessCliTestCase extends TestCase {
         $router->register('snapshot','list',   new Snappy\Cli\Commands\snapshot_list());
         $router->register('snapshot','show',   new Snappy\Cli\Commands\snapshot_show());
         $router->register('snapshot','tag',    new Snappy\Cli\Commands\snapshot_tag());
+        $router->register('snapshot','metrics', new Snappy\Cli\Commands\snapshot_metrics());
         $router->register('share','create', new Snappy\Cli\Commands\share_create());
         $router->register('share','list',   new Snappy\Cli\Commands\share_list());
         $router->register('share','fetch',  new Snappy\Cli\Commands\share_fetch());

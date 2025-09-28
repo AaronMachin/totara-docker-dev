@@ -46,6 +46,7 @@ $router->register('snapshot','create', new Snappy\Cli\Commands\snapshot_create()
 $router->register('snapshot','list',   new Snappy\Cli\Commands\snapshot_list());
 $router->register('snapshot','show',   new Snappy\Cli\Commands\snapshot_show());
 $router->register('snapshot','tag',    new Snappy\Cli\Commands\snapshot_tag());
+$router->register('snapshot','metrics',new Snappy\Cli\Commands\snapshot_metrics());
 
 // Share commands
 $router->register('share','create', new Snappy\Cli\Commands\share_create());
