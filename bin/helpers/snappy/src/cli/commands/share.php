@@ -7,7 +7,7 @@ use Snappy\Cli\context;
 use Snappy\Hosting\ngrok_provider;
 use Snappy\Hosting\options;
 use Snappy\Hosting\manager;
-use RuntimeException;
+use Snappy\Support\Exception\RemoteException;
 
 class share extends base_command {
     public function name(): string {
@@ -114,8 +114,7 @@ class share extends base_command {
         // ---------------------------------------------------------------
         // Ensure host (tunnel) running to obtain external endpoint
         $manager = new manager($ctx->registry->local_base_path(), new ngrok_provider());
-        try { $state = $manager->ensureRunning($opts); }
-        catch (RuntimeException $e) { fwrite(STDERR, 'failed to start host: '.$e->getMessage()."\n"); return 2; }
+        $state = $manager->ensureRunning($opts); // allow exceptions to bubble
         $externalEndpoint = $state['endpoint'] ?? '';
         if ($externalEndpoint === '') { fwrite(STDERR, "host did not provide endpoint\n"); return 2; }
         // Package snapshot directory into tar.gz
@@ -147,8 +146,9 @@ class share extends base_command {
             try { $storage->ensure_bucket(); } catch (\Throwable $e) { /* ignore */ }
             $objectKey = 'shares/' . $resolved . '.tar.gz';
             $storage->put_object($objectKey, $tarPath);
-        } catch (RuntimeException $e) {
-            fwrite(STDERR, 'upload failed: ' . $e->getMessage() . "\n"); return 5;
+        } catch (RemoteException $e) {
+            // Rethrow to be handled centrally with correct exit code mapping
+            throw $e;
         }
         // Build presigned URL using external endpoint
         $expirySeconds = (int)$ctx->config->get('options.presign_default_expiry_seconds', 1800);

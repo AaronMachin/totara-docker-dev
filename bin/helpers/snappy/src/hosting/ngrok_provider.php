@@ -1,7 +1,7 @@
 <?php
 namespace Snappy\Hosting;
 
-use RuntimeException;
+use Snappy\Support\Exception\RemoteException;
 
 class ngrok_provider implements provider {
     public function name(): string { return 'ngrok'; }
@@ -12,7 +12,7 @@ class ngrok_provider implements provider {
         $cmd = 'nohup ngrok http --log=stdout --log-format=json ' . escapeshellarg($opts->port) . ' > ' . escapeshellarg($logFile) . ' 2>&1 & echo $!';
         $pid = trim(shell_exec($cmd));
         if ($pid === '' || !ctype_digit($pid)) {
-            throw new RuntimeException('failed to launch ngrok process');
+            throw new RemoteException('failed to launch ngrok process');
         }
         $pid = (int)$pid;
         $deadline = time() + $opts->timeout;
@@ -34,7 +34,7 @@ class ngrok_provider implements provider {
         }
         if ($endpoint === '') {
             $this->stop(['pid' => $pid]);
-            throw new RuntimeException('ngrok started but endpoint not discovered within timeout');
+            throw new RemoteException('ngrok started but endpoint not discovered within timeout');
         }
         return [
             'pid' => $pid,
@@ -95,4 +95,3 @@ class ngrok_provider implements provider {
         }
     }
 }
-

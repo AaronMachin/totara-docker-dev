@@ -5,8 +5,8 @@ namespace Snappy\Storage;
 use FilesystemIterator;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
-use RuntimeException;
 use InvalidArgumentException;
+use Snappy\Support\Exception\RemoteException;
 
 class s3_storage implements storage {
     private string $endpoint;
@@ -38,7 +38,7 @@ class s3_storage implements storage {
             if ($this->$req === '') { $missing[] = $req; }
         }
         if ($missing) {
-            throw new RuntimeException('Missing config: ' . implode(', ', $missing));
+            throw new RemoteException('Missing config: ' . implode(', ', $missing));
         }
     }
 
@@ -58,7 +58,7 @@ class s3_storage implements storage {
         $response = $this->request('GET', '', ['query' => $query]);
         $xml = @simplexml_load_string($response['body']);
         if (!$xml) {
-            throw new RuntimeException('Bad ListObjectsV2 XML');
+            throw new RemoteException('Bad ListObjectsV2 XML');
         }
         $out = [];
         if (!empty($xml->Contents)) {
@@ -79,7 +79,7 @@ class s3_storage implements storage {
     public function get_object(string $key, string $destination_path): void {
         $res = $this->request('GET', $key);
         if (false === file_put_contents($destination_path, $res['body'])) {
-            throw new RuntimeException('Write failed: ' . $destination_path);
+            throw new RemoteException('Write failed: ' . $destination_path);
         }
     }
 
@@ -123,14 +123,13 @@ class s3_storage implements storage {
         try {
             $this->list_objects('', 1);
             return; // exists
-        } catch (RuntimeException $e) {
+        } catch (RemoteException $e) {
             $msg = $e->getMessage();
             if (stripos($msg, 'NoSuchBucket') === false && strpos($msg, '404') === false) {
-                // Some other error; do not attempt create
-                return;
+                return; // other error
             }
-            // proceed to create
         }
+        // proceed to create
         // Build create bucket request
         $use_path = $this->path_style || $this->auto_path_style;
         $scheme = parse_url($this->endpoint, PHP_URL_SCHEME);
@@ -187,7 +186,7 @@ class s3_storage implements storage {
         if (in_array($status, [200,201,202,204,409], true)) {
             return;
         }
-        throw new RuntimeException('bucket create failed status ' . $status . ' ' . $resp);
+        throw new RemoteException('bucket create failed status ' . $status . ' ' . $resp);
     }
 
     private function guess_mime(string $path): string {
@@ -286,11 +285,11 @@ class s3_storage implements storage {
         if ($resp_body === false) {
             $err = curl_error($ch);
             curl_close($ch);
-            throw new RuntimeException('curl error: ' . $err);
+            throw new RemoteException('curl error: ' . $err);
         }
         curl_close($ch);
         if ($status >= 400) {
-            throw new RuntimeException('s3 error ' . $status . ' ' . $resp_body);
+            throw new RemoteException('s3 error ' . $status . ' ' . $resp_body);
         }
         return ['status' => $status, 'headers' => $headers, 'body' => $resp_body];
     }
@@ -348,7 +347,7 @@ class s3_storage implements storage {
         }
         $fh = fopen($filepath, 'rb');
         if (!$fh) {
-            throw new RuntimeException('open failed: ' . $filepath);
+            throw new RemoteException('open failed: ' . $filepath);
         }
         $ch = curl_init($url);
         curl_setopt($ch, CURLOPT_PUT, true);
@@ -363,22 +362,20 @@ class s3_storage implements storage {
             $err = curl_error($ch);
             fclose($fh);
             curl_close($ch);
-            throw new RuntimeException('curl error: ' . $err);
+            throw new RemoteException('curl error: ' . $err);
         }
         fclose($fh);
         curl_close($ch);
         if ($status >= 400) {
-            throw new RuntimeException('s3 put error ' . $status . ' ' . $resp_body);
+            throw new RemoteException('s3 put error ' . $status . ' ' . $resp_body);
         }
         return $key;
     }
 
     public function delete_object(string $key): void {
-        // S3 DELETE returns 204/200 on success
         try {
             $this->request('DELETE', $key);
-        } catch (RuntimeException $e) {
-            // Swallow not found errors; rethrow others
+        } catch (RemoteException $e) {
             if (stripos($e->getMessage(), 'NoSuchKey') === false && stripos($e->getMessage(), '404') === false) {
                 throw $e;
             }

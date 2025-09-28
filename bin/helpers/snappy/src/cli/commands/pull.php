@@ -6,7 +6,7 @@ use Snappy\Cli\base_command;
 use Snappy\Cli\context;
 use Snappy\Hosting\remote_codec;
 use Throwable;
-use RuntimeException;
+use Snappy\Support\Exception\RemoteException;
 
 class pull extends base_command {
     public function name(): string {
@@ -49,7 +49,7 @@ class pull extends base_command {
 
     private function pullFromShareToken(string $token, bool $force, context $ctx): int {
         try { $decoded = remote_codec::decode($token); }
-        catch (RuntimeException $e) { fwrite(STDERR,'decode failed: '.$e->getMessage()."\n"); return 2; }
+        catch (RemoteException $e) { fwrite(STDERR,'decode failed: '.$e->getMessage()."\n"); return 2; }
         if (($decoded['t'] ?? '') !== 'ps' || empty($decoded['u']) || empty($decoded['x'])) { fwrite(STDERR,'invalid share token (expected fields t=ps,u,x)\n'); return 2; }
         if ((int)$decoded['x'] < time()) { fwrite(STDERR,'share token expired\n'); return 2; }
         $url = $decoded['u'];

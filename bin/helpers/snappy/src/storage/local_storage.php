@@ -6,7 +6,7 @@ use FilesystemIterator;
 use InvalidArgumentException;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
-use RuntimeException;
+use Snappy\Support\Exception\RemoteException;
 
 /**
  * Local filesystem implementation of storage interface.
@@ -19,7 +19,7 @@ class local_storage implements storage {
         $this->base_path = rtrim($base_path, '/');
         if (!is_dir($this->base_path)) {
             if (!@mkdir($this->base_path, 0777, true)) {
-                throw new RuntimeException('Cannot create local storage base path: ' . $this->base_path);
+                throw new RemoteException('Cannot create local storage base path: ' . $this->base_path);
             }
         }
     }
@@ -40,10 +40,10 @@ class local_storage implements storage {
         $dest = $this->full_path($key);
         $dir = dirname($dest);
         if (!is_dir($dir) && !@mkdir($dir, 0777, true)) {
-            throw new RuntimeException('Cannot create directory: ' . $dir);
+            throw new RemoteException('Cannot create directory: ' . $dir);
         }
         if (!@copy($filepath, $dest)) {
-            throw new RuntimeException('Copy failed to ' . $dest);
+            throw new RemoteException('Copy failed to ' . $dest);
         }
         return $key;
     }
@@ -85,25 +85,25 @@ class local_storage implements storage {
     public function get_object(string $key, string $destination_path): void {
         $src = $this->full_path($key);
         if (!is_file($src)) {
-            throw new RuntimeException('Missing object: ' . $key);
+            throw new RemoteException('Missing object: ' . $key);
         }
         $dir = dirname($destination_path);
         if (!is_dir($dir) && !@mkdir($dir, 0777, true)) {
-            throw new RuntimeException('Cannot create dir: ' . $dir);
+            throw new RemoteException('Cannot create dir: ' . $dir);
         }
         if (!@copy($src, $destination_path)) {
-            throw new RuntimeException('Copy failed to ' . $destination_path);
+            throw new RemoteException('Copy failed to ' . $destination_path);
         }
     }
 
     public function read_object(string $key): string {
         $src = $this->full_path($key);
         if (!is_file($src)) {
-            throw new RuntimeException('Missing object: ' . $key);
+            throw new RemoteException('Missing object: ' . $key);
         }
         $data = @file_get_contents($src);
         if ($data === false) {
-            throw new RuntimeException('Read failed: ' . $key);
+            throw new RemoteException('Read failed: ' . $key);
         }
         return $data;
     }
@@ -135,4 +135,3 @@ class local_storage implements storage {
         return $uploaded;
     }
 }
-

@@ -2,7 +2,7 @@
 
 namespace Snappy\Snapshot;
 
-use RuntimeException;
+use Snappy\Support\Exception\RemoteException;
 use Throwable;
 
 class remote_snapshot_cache {
@@ -48,7 +48,7 @@ class remote_snapshot_cache {
      */
     public function update_remote(string $remote, remote_registry $registry, snapshot_manager $manager, int $overscan = 2000): array {
         if (!$registry->has($remote)) {
-            throw new RuntimeException('unknown remote ' . $remote);
+            throw new RemoteException('unknown remote ' . $remote);
         }
         $storage = $registry->storage($remote);
         $existing = $this->load($remote);
@@ -59,7 +59,7 @@ class remote_snapshot_cache {
         try {
             $objects = $storage->list_objects('snaps/', $overscan);
         } catch (Throwable $e) {
-            throw new RuntimeException('list_objects failed: ' . $e->getMessage());
+            throw new RemoteException('list_objects failed: ' . $e->getMessage());
         }
         $metaEntries = [];
         foreach ($objects as $o) {

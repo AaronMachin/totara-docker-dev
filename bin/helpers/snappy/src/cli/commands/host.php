@@ -7,8 +7,8 @@ use Snappy\Cli\context;
 use Snappy\Hosting\manager;
 use Snappy\Hosting\options;
 use Snappy\Hosting\ngrok_provider;
+use Snappy\Support\Exception\RemoteException;
 use Throwable;
-use RuntimeException;
 
 class host extends base_command {
     public function name(): string {
@@ -89,12 +89,7 @@ class host extends base_command {
     }
 
     private function doStart(manager $manager, options $opts): int {
-        try {
-            $state = $manager->ensureRunning($opts);
-        } catch (RuntimeException $e) {
-            fwrite(STDERR, 'start failed: ' . $e->getMessage() . "\n");
-            return 2;
-        }
+        $state = $manager->ensureRunning($opts); // may throw RemoteException
         $already = $manager->isRunning() && ($state['started'] ?? '') !== '' && (time() - strtotime($state['started'])) > 2;
         echo($already ? "host: already running\n" : "host: started\n");
         echo "provider: " . ($state['provider'] ?? 'unknown') . "\n";
@@ -102,11 +97,13 @@ class host extends base_command {
         try {
             $encoded = $manager->buildEncodedRemote($state);
             echo "encoded: $encoded\n";
-        } catch (Throwable $e) {
+        } catch (RemoteException $e) {
             fwrite(STDERR, 'encode failed: ' . $e->getMessage() . "\n");
             $encoded = '';
+        } catch (Throwable $e) {
+            fwrite(STDERR, 'encode failed: ' . $e->getMessage() . "\n");
         }
-        if ($encoded !== '') {
+        if (!empty($encoded)) {
             echo "Pull example: tsnap pull --encoded=$encoded <SNAPSHOT_UID>\n";
         }
         echo "Use 'tsnap host logs' to follow tunnel output, 'tsnap host stop' to terminate.\n";

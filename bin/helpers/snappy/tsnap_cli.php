@@ -25,10 +25,17 @@ use Snappy\Config\config_manager;
 // Load config first (using a provisional base path); then derive snapshot root from config schema default/user value.
 $home = getenv('HOME') ?: '~';
 $configDir = __DIR__;
-$configFile = $configDir . '/config.json';
-$provisionalBase = $home . '/.snappy';
+$overrideConfig = getenv('SNAPPY_CONFIG_FILE');
+$configFile = $overrideConfig !== false && $overrideConfig !== '' ? $overrideConfig : ($configDir . '/config.json');
+$provisionalBase = getenv('SNAPPY_PROVISIONAL_BASE');
+if ($provisionalBase === false || $provisionalBase === '') { $provisionalBase = $home . '/.snappy'; }
 $config = new config_manager($configFile, $provisionalBase);
-$snapshotBase = $config->get('options.snapshot_root', $provisionalBase);
+$overrideSnapshotBase = getenv('SNAPPY_SNAPSHOT_BASE');
+if ($overrideSnapshotBase !== false && $overrideSnapshotBase !== '') {
+    $snapshotBase = $overrideSnapshotBase;
+} else {
+    $snapshotBase = $config->get('options.snapshot_root', $provisionalBase);
+}
 $remoteRegistry = new remote_registry($config, $snapshotBase);
 $manager = new snapshot_manager($remoteRegistry);
 $cache = new remote_snapshot_cache($snapshotBase);
@@ -85,5 +92,16 @@ foreach ($argv as $v) {
     }
 }
 
-$exit = $commands[$cmd]->run($argv, $ctx);
+$exit = 0;
+try {
+    $exit = $commands[$cmd]->run($argv, $ctx);
+} catch (\Snappy\Support\Exception\SnappyException $e) {
+    $code = \Snappy\Support\Exception\ExitCodes::codeFor($e);
+    fwrite(STDERR, 'ERROR(' . $code . '): ' . $e->getMessage() . "\n");
+    exit($code);
+} catch (\Throwable $e) {
+    $code = \Snappy\Support\Exception\ExitCodes::UNKNOWN;
+    fwrite(STDERR, 'ERROR(' . $code . '): ' . $e->getMessage() . "\n");
+    exit($code);
+}
 exit($exit);

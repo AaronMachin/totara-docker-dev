@@ -3,7 +3,10 @@
 namespace Snappy\Snapshot;
 
 use Snappy\Util\snapshot_uid;
-use RuntimeException;
+use Snappy\Support\Exception\ValidationException;
+use Snappy\Support\Exception\SnapshotNotFoundException;
+use Snappy\Support\Exception\RemoteException;
+use Snappy\Support\Exception\ProcessFailedException;
 use Throwable;
 
 class snapshot_manager {
@@ -21,9 +24,7 @@ class snapshot_manager {
     }
 
     public function create(string $type, string $message, string $remote = 'local'): string {
-        if ($remote !== 'local') {
-            throw new RuntimeException('Snapshots can only be created in local remote then pushed');
-        }
+        if ($remote !== 'local') { throw new ValidationException('Snapshots can only be created in local remote then pushed'); }
         $uid = snapshot_uid::generate();
         $meta = [
             'uid' => $uid,
@@ -33,11 +34,8 @@ class snapshot_manager {
             'files' => [],
             'file_checksums' => [],
         ];
-        if ($type === 'sql') {
-            $this->create_sql_backup($uid, $meta);
-        } else {
-            throw new RuntimeException('unknown snapshot type: ' . $type);
-        }
+        if ($type === 'sql') { $this->create_sql_backup($uid, $meta); }
+        else { throw new ValidationException('Unknown snapshot type: ' . $type); }
         $this->write_meta('local', $uid, $meta);
         return $uid;
     }
@@ -65,7 +63,7 @@ class snapshot_manager {
             if ($matches) { $candidate = $matches[0]; }
         }
         if (!$candidate || !is_file($candidate)) {
-            throw new RuntimeException('could not locate database backup for uid ' . $uid . ' in ' . $default_path . ' (backup may have failed)');
+            throw new ProcessFailedException('Could not locate database backup for uid ' . $uid . ' in ' . $default_path . ' (backup may have failed)');
         }
         $backup_file = $dir . '/backup.sql';
         copy($candidate, $backup_file);
@@ -299,13 +297,9 @@ class snapshot_manager {
     }
 
     public function push(string $uid, string $target_remote, string $source_remote = 'local'): int {
-        if ($source_remote === $target_remote) {
-            throw new RuntimeException('source and target remotes identical');
-        }
+        if ($source_remote === $target_remote) { throw new ValidationException('Source and target remotes identical'); }
         $meta = $this->read_meta($source_remote, $uid);
-        if (!$meta) {
-            throw new RuntimeException('unknown snapshot ' . $uid);
-        }
+        if (!$meta) { throw new SnapshotNotFoundException('Unknown snapshot ' . $uid); }
         $this->verify($source_remote, $uid, $meta);
         $target = $this->registry->storage($target_remote);
         // Ensure bucket exists if S3 storage
@@ -315,9 +309,7 @@ class snapshot_manager {
         $count = 0;
         foreach ($meta['files'] as $file) {
             $path = $this->local_snapshot_dir($uid) . '/' . $file;
-            if (!is_file($path)) {
-                throw new RuntimeException('missing file ' . $file);
-            }
+            if (!is_file($path)) { throw new RemoteException('Missing file ' . $file); }
             $target->put_object('snaps/' . $uid . '/' . $file, $path);
             $count++;
         }
@@ -330,25 +322,15 @@ class snapshot_manager {
     }
 
     public function pull(string $token, string $source_remote, bool $force = false): string {
-        if ($source_remote === 'local') {
-            throw new RuntimeException('source remote cannot be local');
-        }
-        if (!$this->registry->has($source_remote)) {
-            throw new RuntimeException('unknown remote ' . $source_remote);
-        }
+        if ($source_remote === 'local') { throw new ValidationException('Source remote cannot be local'); }
+        if (!$this->registry->has($source_remote)) { throw new RemoteException('Unknown remote ' . $source_remote); }
         $uid = $this->resolve_uid($token, $source_remote);
-        if ($uid === '') {
-            throw new RuntimeException('no or ambiguous match for ' . $token);
-        }
-        if (!$force && $this->read_meta('local', $uid)) {
-            throw new RuntimeException('snapshot already exists locally: ' . $uid);
-        }
+        if ($uid === '') { throw new SnapshotNotFoundException('No or ambiguous match for ' . $token); }
+        if (!$force && $this->read_meta('local', $uid)) { throw new ValidationException('Snapshot already exists locally: ' . $uid); }
         $storage = $this->registry->storage($source_remote);
         $prefix = 'snaps/' . $uid . '/';
         $objects = $storage->list_objects($prefix, 2000);
-        if (!$objects) {
-            throw new RuntimeException('remote snapshot objects missing for ' . $uid);
-        }
+        if (!$objects) { throw new SnapshotNotFoundException('Remote snapshot objects missing for ' . $uid); }
         $file_keys = [];
         $meta_json = '';
         foreach ($objects as $o) {
@@ -368,9 +350,7 @@ class snapshot_manager {
             $meta_json = $storage->read_object($prefix . 'meta.json');
         }
         $meta = @json_decode($meta_json, true);
-        if (!is_array($meta)) {
-            throw new RuntimeException('invalid meta.json in remote snapshot');
-        }
+        if (!is_array($meta)) { throw new RemoteException('Invalid meta.json in remote snapshot'); }
         $local_dir = $this->local_snapshot_dir($uid);
         foreach ($file_keys as $rel) {
             $dest = $local_dir . '/' . $rel;
@@ -382,32 +362,23 @@ class snapshot_manager {
         }
         foreach (($meta['file_checksums'] ?? []) as $file => $hash) {
             $full = $local_dir . '/' . $file;
-            if (!is_file($full)) {
-                throw new RuntimeException('downloaded snapshot missing file ' . $file);
-            }
+            if (!is_file($full)) { throw new RemoteException('Downloaded snapshot missing file ' . $file); }
             $actual = hash_file('sha256', $full);
-            if ($actual !== $hash) {
-                throw new RuntimeException('checksum mismatch after pull for ' . $file);
-            }
+            if ($actual !== $hash) { throw new ValidationException('Checksum mismatch after pull for ' . $file); }
         }
         $this->write_meta('local', $uid, $meta);
         return $uid;
     }
 
     private function verify(string $remote, string $uid, array $meta): void {
-        if ($remote !== 'local') {
-            return;
-        } // for now only verify local
+        if ($remote !== 'local') { return; }
+        // for now only verify local
         $dir = $this->local_snapshot_dir($uid);
         foreach (($meta['file_checksums'] ?? []) as $file => $hash) {
             $full = $dir . '/' . $file;
-            if (!is_file($full)) {
-                throw new RuntimeException('missing file ' . $file);
-            }
+            if (!is_file($full)) { throw new RemoteException('Missing file ' . $file); }
             $actual = hash_file('sha256', $full);
-            if ($actual !== $hash) {
-                throw new RuntimeException('checksum mismatch for ' . $file);
-            }
+            if ($actual !== $hash) { throw new ValidationException('Checksum mismatch for ' . $file); }
         }
     }
 
@@ -431,9 +402,7 @@ class snapshot_manager {
     }
 
     private function write_meta(string $remote, string $uid, array $meta): void {
-        if ($remote !== 'local') {
-            throw new RuntimeException('write_meta only allowed for local');
-        }
+        if ($remote !== 'local') { throw new ValidationException('write_meta only allowed for local'); }
         $file = $this->local_snapshot_dir($uid) . '/meta.json';
         file_put_contents($file, json_encode($meta, JSON_PRETTY_PRINT));
     }

@@ -2,8 +2,9 @@
 
 namespace Snappy\Snapshot;
 
-use Exception;
-use RuntimeException;
+use Exception; // keep for generic default() exceptions for now
+use Snappy\Support\Exception\RemoteException;
+use Snappy\Support\Exception\ValidationException;
 use Snappy\Storage\storage;
 use Snappy\Storage\local_storage;
 use Snappy\Storage\s3_storage;
@@ -74,18 +75,10 @@ class remote_registry {
     }
 
     public function add(string $name, string $type, array $config): void {
-        if ($name === 'local') {
-            throw new RuntimeException('Cannot redefine reserved remote "local"');
-        }
-        if (!preg_match('/^[a-zA-Z0-9._-]+$/', $name)) {
-            throw new RuntimeException('Invalid remote name');
-        }
-        if ($this->has($name)) {
-            throw new RuntimeException('Remote already exists: ' . $name);
-        }
-        if (!in_array($type, ['s3'], true)) {
-            throw new RuntimeException('Unsupported remote type: ' . $type);
-        }
+        if ($name === 'local') { throw new ValidationException('Cannot redefine reserved remote "local"'); }
+        if (!preg_match('/^[a-zA-Z0-9._-]+$/', $name)) { throw new ValidationException('Invalid remote name'); }
+        if ($this->has($name)) { throw new ValidationException('Remote already exists: ' . $name); }
+        if (!in_array($type, ['s3'], true)) { throw new ValidationException('Unsupported remote type: ' . $type); }
         if ($type === 's3') {
             $defaults = $this->cfg->get('options.s3', []);
             $autoKeys = ['endpoint', 'bucket', 'region', 'key', 'secret', 'path_style', 'debug'];
@@ -103,9 +96,7 @@ class remote_registry {
                     $missing[] = $r;
                 }
             }
-            if ($missing) {
-                throw new RuntimeException('Missing s3 config keys: ' . implode(', ', $missing));
-            }
+            if ($missing) { throw new ValidationException('Missing s3 config keys: ' . implode(', ', $missing)); }
             if (!isset($config['region']) || $config['region'] === '') {
                 $config['region'] = $defaults['region'] ?? 'us-east-1';
             }
@@ -122,32 +113,22 @@ class remote_registry {
     }
 
     public function remove(string $name): void {
-        if ($name === 'local') {
-            throw new RuntimeException('Cannot remove local remote');
-        }
-        if (!$this->has($name)) {
-            throw new RuntimeException('Unknown remote ' . $name);
-        }
+        if ($name === 'local') { throw new ValidationException('Cannot remove local remote'); }
+        if (!$this->has($name)) { throw new RemoteException('Unknown remote ' . $name); }
         $this->cfg->remove('remotes.' . $name, true);
         unset($this->storage_cache[$name]);
     }
 
     public function storage(string $name): storage {
-        if (!$this->has($name)) {
-            throw new RuntimeException('Unknown remote ' . $name);
-        }
+        if (!$this->has($name)) { throw new RemoteException('Unknown remote ' . $name); }
         if (isset($this->storage_cache[$name])) {
             return $this->storage_cache[$name];
         }
         $meta = $this->cfg->get('remotes.' . $name);
         $type = $meta['type'] ?? '';
-        if ($type === 'local') {
-            $st = new local_storage($meta['path']);
-        } elseif ($type === 's3') {
-            $st = new s3_storage($meta['config'] ?? []);
-        } else {
-            throw new RuntimeException('Unsupported remote type ' . $type);
-        }
+        if ($type === 'local') { $st = new local_storage($meta['path']); }
+        elseif ($type === 's3') { $st = new s3_storage($meta['config'] ?? []); }
+        else { throw new ValidationException('Unsupported remote type ' . $type); }
         return $this->storage_cache[$name] = $st;
     }
 

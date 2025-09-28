@@ -79,7 +79,7 @@ Acceptance Criteria: Autoloader available; CLI unaffected; vendor dir ignored by
 Edge Cases: Composer missing—document manual requirement in README later.
 Rollback Strategy: Remove composer.json, any vendor references, revert tsnap_cli.php changes.
 Risks & Mitigations: Path detection issues—guard conditional require.
-Follow-Up Tasks: Namespace reorganization (T1.2), test framework (T10.*).
+Follow-Up Tasks: Exception hierarchy (T1.3), test framework (T10.*).
 Time Estimate: S.
 Deliverables: composer.json, updated tsnap_cli.php.
 Agent Execution Checklist:
@@ -88,48 +88,6 @@ Agent Execution Checklist:
  - [ ] Modify tsnap_cli.php bootstrap
  - [ ] Validate CLI commands
  - [ ] Commit changes
-
--------------------------------------------------------------------
-T1.2 Directory Restructure
--------------------------------------------------------------------
-ID: T1.2
-Title: Introduce Layered Directory Structure
-Project Name: Snappy (rewrite of prototype)
-Project Purpose: Snappy is a local-first developer tool to create, store, list, verify, and share database snapshots (initially SQL dumps) enriched with strong metadata and secure one-time sharing. Goals: simplicity, reliability, rich manifest metadata (Manifest v2), fast O(1) listing via indexes, optional compression, tagging & filtering, minimal retention, secure single-use sharing tokens, and maintainable modular architecture (Domain / Application / Infrastructure / CLI / Support). Backwards compatibility with the prototype is NOT required.
-Rewrite Note: Clean rewrite; breaking changes are acceptable and expected. No deprecation warnings or transitional alias layers; legacy command names will be replaced outright.
-Global Constraints: Plain PHP (>=8.1) with optional Composer. Avoid unnecessary complexity. Security focus ONLY on integrity and confidentiality of shared / one-time export artifacts (not local storage hardening). Policies beyond simple retention deferred.
-Context Recap: All domain, infrastructure, CLI logic intertwined; need separation for maintainability.
-Objective: Reorganize code into Domain/, Application/, Infrastructure/, CLI/, Support/ while maintaining behavior.
-Rationale: Improves modularity, future extension (providers, indexing, sharing) without coupling.
-Dependencies: T1.1 (autoload) recommended to ease namespace updates.
-Preconditions: Running baseline tests (manual) pass.
-Scope (In): Physical file moves, namespace updates, minimal shims if necessary.
-Scope (Out): Logic refactors, renaming public method APIs (handled by later tickets if needed).
-Implementation Steps:
- 1. Plan mapping: snapshot -> Domain/Snapshot; storage -> Infrastructure/Storage; config -> Infrastructure/Config; util -> Support/Util; cli -> CLI/Core + CLI/Commands.
- 2. Create new directories and move files accordingly.
- 3. Update namespaces uniformly (e.g., Snappy\Snapshot => Snappy\Domain\Snapshot).
- 4. Update references across code (search/replace).
- 5. Run CLI help, create snapshot to validate.
- 6. Add docs/dev/architecture.md initial stub listing new layer purpose.
-Data Structures: None changed.
-File Targets: Moves of all PHP in src; create docs/dev/architecture.md.
-Testing & Validation: Manual run of snap, list, push (if available) to ensure no fatal errors.
-Acceptance Criteria: All previously working commands succeed; new structure present; architecture doc stub exists.
-Edge Cases: Autoload case sensitivity issues on some filesystems.
-Rollback Strategy: Git revert commit.
-Risks & Mitigations: High churn—do early; keep commit atomic.
-Follow-Up Tasks: Exception hierarchy (T1.3), ProcessRunner (T1.4).
-Time Estimate: M.
-Deliverables: Reorganized directory structure, updated namespaces, architecture stub.
-Agent Execution Checklist:
- - [ ] Create new directories
- - [ ] Move files
- - [ ] Update namespaces
- - [ ] Adjust references
- - [ ] Validate commands
- - [ ] Add architecture stub
- - [ ] Commit
 
 -------------------------------------------------------------------
 T1.3 Unified Error & Exception Hierarchy
@@ -143,8 +101,8 @@ Global Constraints: Plain PHP (>=8.1) with optional Composer. Avoid unnecessary 
 Context Recap: Mixed RuntimeException usage provides inconsistent error semantics.
 Objective: Introduce SnappyException base + domain-specific subclasses mapped to documented exit codes.
 Rationale: Predictable scripting integration & structured JSON output later.
-Dependencies: T1.2 (namespaces stable).
-Preconditions: Directory restructure completed.
+Dependencies: T1.1 (autoload in place ensures consistent loading).
+Preconditions: Autoload working.
 Scope (In): New exceptions, central catch in CLI entry, docs/exit-codes.md.
 Scope (Out): JSON output (handled later in T5.2), retry logic.
 Implementation Steps:
@@ -186,7 +144,7 @@ Global Constraints: Plain PHP (>=8.1) with optional Composer. Avoid unnecessary 
 Context Recap: system() with redirection hides errors; no stdout/stderr capture.
 Objective: Replace system() usage with ProcessRunner capturing stdout, stderr, exit code, duration.
 Rationale: Improves error reporting; enables later logging and compression pipeline reliability.
-Dependencies: Prefer after T1.2 (paths stable). Not strictly dependent on exceptions but integrates better once T1.3 done.
+Dependencies: None (can follow T1.3 for richer errors).
 Preconditions: Snapshot creation currently working.
 Scope (In): Support/Process/ProcessRunner, integration in snapshot creation path.
 Scope (Out): Async exec, streaming progress.
@@ -225,7 +183,7 @@ Context Recap: meta.json minimal; need richer metadata for indexing, filtering, 
 Objective: Author schema/manifest_v2.json + example illustrating all fields.
 Rationale: Provides contract for dual writing & future validation.
 Dependencies: None (post T1.* helpful but not mandatory).
-Preconditions: Directory structure stable.
+Preconditions: Autoload and baseline manifest (meta.json) present.
 Scope (In): schema file, example manifest, optional validator script.
 Scope (Out): Reader changes (handled T2.3), writing logic (T2.2).
 Implementation Steps:
@@ -1220,7 +1178,7 @@ Scope (Out): Quarantine area (could add later).
 Implementation Steps:
  1. Collect all object_hash from manifest-v2 files.
  2. Walk objects/sha256 tree; mark files missing from set.
- 3. If dry-run list candidates; if apply unlink.
+ 3. If dry-run list candidates; if apply: unlink.
  4. Summary stats printed (#kept, #removed, bytes reclaimed).
 Data Structures: Set of hashes.
 File Targets: gc command implementation.
@@ -1354,7 +1312,7 @@ Global Constraints: Plain PHP (>=8.1) with optional Composer. Avoid unnecessary 
 Context Recap: Contributors need clarity on layers & extension points.
 Objective: docs/dev/architecture.md explaining Domain, Application, Infrastructure, CLI, Support layers and data flow.
 Rationale: Faster contributor onboarding; consistent design decisions.
-Dependencies: Directory restructure done; Manifest v2 in place.
+Dependencies: Manifest v2 in place.
 Preconditions: Core features implemented.
 Scope (In): Layer descriptions, class role examples, manifest anatomy, index flow, share token lifecycle diagram (ASCII acceptable).
 Scope (Out): API stability guarantees (not yet finalized).

@@ -2,7 +2,7 @@
 
 namespace Snappy\Config;
 
-use RuntimeException;
+use Snappy\Support\Exception\ConfigException;
 
 class config_manager {
     private string $file;
@@ -70,7 +70,7 @@ class config_manager {
         $payload['updated'] = date('c');
         $json = json_encode($payload, JSON_PRETTY_PRINT);
         if (@file_put_contents($this->file, $json) === false) {
-            throw new RuntimeException('Failed to write config file: '.$this->file);
+            throw new ConfigException('Failed to write config file: '.$this->file);
         }
         $this->dirty = false;
     }
@@ -118,7 +118,7 @@ class config_manager {
         $raw = @file_get_contents($this->file);
         $data = @json_decode($raw, true);
         if (!is_array($data)) {
-            throw new RuntimeException('Invalid config JSON in '.$this->file);
+            throw new ConfigException('Invalid config JSON in '.$this->file);
         }
         $this->raw = $data;
     }

@@ -2,7 +2,6 @@
 
 namespace Snappy\Cli\Commands;
 
-use RuntimeException;
 use Snappy\Cli\base_command;
 use Snappy\Cli\context;
 
@@ -38,15 +37,13 @@ class remote extends base_command {
         if ($name==='' || $type==='') { fwrite(STDERR,"remote add requires <name> <type>\n"); $this->display_help(); return 1; }
         array_shift($args); array_shift($args);
         $config=[]; foreach ($args as $arg){ if(!str_starts_with($arg,'--')) continue; if(str_starts_with($arg,'--endpoint=')) $config['endpoint']=substr($arg,11); elseif(str_starts_with($arg,'--bucket=')) $config['bucket']=substr($arg,9); elseif(str_starts_with($arg,'--region=')) $config['region']=substr($arg,9); elseif(str_starts_with($arg,'--key=')) $config['key']=substr($arg,6); elseif(str_starts_with($arg,'--secret=')) $config['secret']=substr($arg,9); elseif($arg==='--path-style') $config['path_style']=true; }
-        try { $ctx->registry->add($name,$type,$config); }
-        catch (RuntimeException $e) { fwrite(STDERR,'add failed: '.$e->getMessage()."\n"); return 2; }
+        $ctx->registry->add($name,$type,$config); // may throw mapped exception
         echo "added remote $name ($type)\n"; return 0;
     }
 
     private function doRemove(array $args, context $ctx): int {
         $name = $args[0] ?? ''; if ($name===''){ fwrite(STDERR,"remote remove requires <name>\n"); return 1; }
-        try { $ctx->registry->remove($name); }
-        catch (RuntimeException $e) { fwrite(STDERR,'remove failed: '.$e->getMessage()."\n"); return 2; }
+        $ctx->registry->remove($name); // may throw mapped exception
         echo "removed remote $name\n"; return 0;
     }
 }

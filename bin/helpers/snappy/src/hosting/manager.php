@@ -1,7 +1,7 @@
 <?php
 namespace Snappy\Hosting;
 
-use RuntimeException;
+use Snappy\Support\Exception\RemoteException;
 
 class manager {
     private string $root; // snapshot root
@@ -72,13 +72,13 @@ class manager {
         }
 
         if (!$this->provider) {
-            throw new RuntimeException('no provider available and no endpoint specified');
+            throw new RemoteException('no provider available and no endpoint specified');
         }
 
         $provState = $this->provider->start($opts, $this->root);
         $endpoint = $provState['endpoint'] ?? '';
         if ($endpoint === '') {
-            throw new RuntimeException('provider returned empty endpoint');
+            throw new RemoteException('provider returned empty endpoint');
         }
         $state = [
             'provider' => $this->provider->name(),
@@ -130,10 +130,10 @@ class manager {
 
     public function buildEncodedRemote(?array $state = null): string {
         $s = $state ?: $this->state();
-        if (!$s) throw new RuntimeException('host not running');
-        if (!$this->isRunning()) throw new RuntimeException('host process not active');
+        if (!$s) throw new RemoteException('host not running');
+        if (!$this->isRunning()) throw new RemoteException('host process not active');
         $endpoint = $s['endpoint'] ?? ($s['provider_state']['endpoint'] ?? '');
-        if ($endpoint === '') throw new RuntimeException('state missing endpoint');
+        if ($endpoint === '') throw new RemoteException('state missing endpoint');
         $opts = $s['options'] ?? [];
         $payload = [
             't' => 's3',
