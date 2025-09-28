@@ -65,6 +65,9 @@ $router->register('verify','run', new Snappy\Cli\Commands\verify_run());
 // GC
 $router->register('gc','objects', new Snappy\Cli\Commands\gc_objects());
 
+// Doctor
+$router->register('doctor','run', new Snappy\Cli\Commands\doctor_run());
+
 // Config
 $router->register('config','get', new Snappy\Cli\Commands\config_get());
 $router->register('config','set', new Snappy\Cli\Commands\config_set());

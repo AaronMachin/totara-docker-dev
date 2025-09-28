@@ -33,7 +33,7 @@ abstract class base_command implements command {
             'snapshot' => 'Snapshot',
             'share' => 'Share',
             'config' => 'Config',
-            'prune', 'verify', 'remote' => 'Maintenance',
+            'prune', 'verify', 'remote', 'doctor', 'gc' => 'Maintenance',
             default => 'Other'
         };
     }
