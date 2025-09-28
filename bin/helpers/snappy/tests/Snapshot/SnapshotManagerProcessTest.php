@@ -114,18 +114,46 @@ PHP;
     {
         $backupPath = $this->tmpDir . '/backups';
         @mkdir($backupPath, 0777, true);
-        // Point to non-existent binary to force failure
         putenv('SNAPPY_TDB_BIN=' . $this->tmpDir . '/does_not_exist');
         $manager = $this->makeManager($backupPath);
         $this->expectException(ProcessFailedException::class);
         try {
-            $manager->create('sql', 'should fail');
+            $manager->create('sql', 'should fail'); // keepFailed default false => temp directory should be removed
         } catch (ProcessFailedException $e) {
             $result = $e->result();
             if ($result) {
                 self::assertNotSame(0, $result->exitCode);
             }
-            throw $e; // rethrow to satisfy expectException
+            // Assert temp directory cleaned (no tmp/* dirs)
+            $tempGlob = glob($this->tmpDir . '/tmp/*');
+            self::assertTrue(empty($tempGlob), 'Temp directory should be cleaned when keepFailed=false');
+            throw $e;
         }
+    }
+
+    public function testCreateSqlBackupFailureWithKeepFailedLogs(): void
+    {
+        $backupPath = $this->tmpDir . '/backups';
+        @mkdir($backupPath, 0777, true);
+        putenv('SNAPPY_TDB_BIN=' . $this->tmpDir . '/does_not_exist');
+        $manager = $this->makeManager($backupPath);
+        $caught = false;
+        try {
+            // keepFailed flag true to preserve temp directory and log
+            $manager->create('sql', 'should fail and keep logs', 'local', false, true);
+        } catch (ProcessFailedException $e) {
+            $caught = true;
+            $result = $e->result();
+            if ($result) { self::assertNotSame(0, $result->exitCode); }
+        }
+        self::assertTrue($caught, 'Expected ProcessFailedException not thrown');
+        // Find dump.log
+        $logFiles = glob($this->tmpDir . '/tmp/*/logs/dump.log');
+        self::assertNotFalse($logFiles, 'glob failed');
+        self::assertNotEmpty($logFiles, 'Expected at least one dump.log retained');
+        $log = file_get_contents($logFiles[0]);
+        self::assertStringContainsString('SNAPPY DUMP FAILURE', $log);
+        self::assertStringContainsString('exit_code:', $log);
+        self::assertStringContainsString('--- stderr ---', $log);
     }
 }

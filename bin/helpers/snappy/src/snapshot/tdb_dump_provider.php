@@ -32,7 +32,7 @@ class TdbDumpProvider implements DumpProviderInterface {
             if (count($lines) > 10) { $truncated .= "\n... (stderr truncated)"; }
             $msg = 'Database backup process failed (exit code ' . $result->exitCode . ") for alias $uid";
             if ($truncated !== '') { $msg .= ":\n" . $truncated; }
-            throw new ProcessFailedException($msg, $result);
+            throw new ProcessFailedException($msg, $result, $command);
         }
         // Locate dump artifact produced by tdb in configured backup path.
         $candidate = '';
@@ -57,4 +57,3 @@ class TdbDumpProvider implements DumpProviderInterface {
         ], $metadata);
     }
 }
-

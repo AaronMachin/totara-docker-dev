@@ -7,6 +7,7 @@ use Snappy\Support\Exception\ValidationException;
 use Snappy\Support\Exception\SnapshotNotFoundException;
 use Snappy\Support\Exception\RemoteException;
 use Snappy\Support\Exception\ProcessFailedException;
+use Snappy\Support\Process\process_runner;
 use Throwable;
 
 class snapshot_manager {
@@ -25,7 +26,7 @@ class snapshot_manager {
         return $this->registry;
     }
 
-    public function create(string $type, string $message, string $remote = 'local'): string {
+    public function create(string $type, string $message, string $remote = 'local', bool $compress = false, bool $keepFailed = false): string {
         if ($remote !== 'local') { throw new ValidationException('Snapshots can only be created in local remote then pushed'); }
         $uid = snapshot_uid::generate();
         $meta = [
@@ -36,22 +37,43 @@ class snapshot_manager {
             'files' => [],
             'file_checksums' => [],
         ];
-        if ($type === 'sql') { $this->create_sql_backup($uid, $meta); }
-        else { throw new ValidationException('Unknown snapshot type: ' . $type); }
-        // Build & write manifest-v2.json before legacy meta.json (dual write) per T2.2
+        $started = microtime(true);
+        $tempDir = $this->temp_snapshot_dir($uid);
+        $finalDir = rtrim($this->registry->local_base_path(), '/') . '/snaps/' . $uid; // avoid creating early
+        @mkdir(dirname($finalDir) . '/', 0777, true);
         try {
-            $manifest = $this->build_manifest_v2($uid, $type, $message, $meta);
-            // integrity assertion (#files match)
-            if (count($manifest['files']) !== count($meta['files'])) {
-                throw new ValidationException('Manifest v2 file count mismatch');
+            if ($type === 'sql') { $this->create_sql_backup($uid, $meta, $tempDir); }
+            else { throw new ValidationException('Unknown snapshot type: ' . $type); }
+            $compressionInfo = null;
+            if ($compress) {
+                try { $compressionInfo = $this->apply_compression($uid, $meta, $tempDir); }
+                catch (Throwable $e) { throw new ProcessFailedException('Compression failed: '.$e->getMessage()); }
             }
-            $this->write_manifest_v2($uid, $manifest);
+            // Promote temp -> final (atomic if same filesystem)
+            if (!@rename($tempDir, $finalDir)) {
+                throw new ProcessFailedException('Failed to promote snapshot directory');
+            }
+            // Build & write manifest-v2.json before legacy meta.json
+            try {
+                $manifest = $this->build_manifest_v2($uid, $type, $message, $meta, $compressionInfo);
+                if (count($manifest['files']) !== count($meta['files'])) { throw new ValidationException('Manifest v2 file count mismatch'); }
+                $this->write_manifest_v2($uid, $manifest);
+            } catch (Throwable $e) { throw $e; }
+            $this->write_meta('local', $uid, $meta);
+            return $uid;
         } catch (Throwable $e) {
-            // Fail fast prior to writing meta.json to avoid divergent states
-            throw $e;
+            // Write failure log (best-effort)
+            $this->write_dump_failure_log($tempDir, $uid, $e, $started, microtime(true));
+            if (!$keepFailed) { $this->recursive_delete($tempDir); }
+            throw $e; // propagate
         }
-        $this->write_meta('local', $uid, $meta);
-        return $uid;
+    }
+
+    private function temp_snapshot_dir(string $uid): string {
+        $base = rtrim($this->registry->local_base_path(), '/');
+        $dir = $base . '/tmp/' . $uid;
+        if (!is_dir($dir)) { @mkdir($dir, 0777, true); }
+        return $dir;
     }
 
     private function local_snapshot_dir(string $uid): string {
@@ -63,8 +85,8 @@ class snapshot_manager {
         return $dir;
     }
 
-    private function create_sql_backup(string $uid, array &$meta): void {
-        $dir = $this->local_snapshot_dir($uid);
+    private function create_sql_backup(string $uid, array &$meta, ?string $workDir = null): void {
+        $dir = $workDir ?: $this->local_snapshot_dir($uid);
         $context = ['type' => 'sql'];
         $provider = $this->dump_resolver()->resolve($context);
         $result = $provider->dump($uid, $dir, ['registry' => $this->registry]);
@@ -82,6 +104,57 @@ class snapshot_manager {
         // Optionally store metadata from provider (non-breaking addition)
         $dumpMeta = $result->metadata();
         if ($dumpMeta) { $meta['dump_metadata'] = $dumpMeta; }
+    }
+
+    private function apply_compression(string $uid, array &$meta, ?string $workDir = null): ?array {
+        $dir = $workDir ?: $this->local_snapshot_dir($uid);
+        $original = $dir . '/backup.sql';
+        if (!is_file($original)) { return null; } // nothing to compress (unexpected but ignore)
+        $originalSize = filesize($original) ?: 0;
+        $gzPath = $original . '.gz';
+        // Prefer streaming with zlib extension
+        $success = false;
+        if (function_exists('gzopen')) {
+            $in = @fopen($original, 'rb');
+            $out = @gzopen($gzPath, 'wb6');
+            if ($in && $out) {
+                while (!feof($in)) { $chunk = fread($in, 8192); if ($chunk === false) { break; } gzwrite($out, $chunk); }
+                fclose($in); gzclose($out);
+                $success = is_file($gzPath) && filesize($gzPath) >= 0;
+            }
+        }
+        if (!$success) {
+            // Fallback to external gzip if available
+            $runner = new process_runner();
+            $gzipBin = trim((string)@shell_exec('command -v gzip 2>/dev/null')) ?: 'gzip';
+            $test = @shell_exec($gzipBin . ' --version 2>/dev/null');
+            if ($test !== null && $test !== '') {
+                $cmd = [$gzipBin, '-c', $original];
+                $result = $runner->run($cmd);
+                if ($result->exitCode === 0) { file_put_contents($gzPath, $result->stdout); $success = true; }
+            }
+        }
+        if (!$success || !is_file($gzPath)) { throw new ValidationException('Compression requested but no gzip capability available'); }
+        $compressedSize = filesize($gzPath) ?: 0;
+        $ratio = ($originalSize > 0) ? ($compressedSize / $originalSize) : 0.0; // compressed/original per schema
+        $checksum = hash_file('sha256', $gzPath);
+        // Update meta: replace backup.sql entry with backup.sql.gz
+        $newFiles = [];
+        foreach ($meta['files'] as $f) { $newFiles[] = ($f === 'backup.sql') ? 'backup.sql.gz' : $f; }
+        $meta['files'] = $newFiles;
+        // Adjust checksums
+        $newChecksums = [];
+        foreach ($meta['file_checksums'] as $f => $h) { if ($f === 'backup.sql') { continue; } $newChecksums[$f] = $h; }
+        $newChecksums['backup.sql.gz'] = $checksum;
+        $meta['file_checksums'] = $newChecksums;
+        // Remove original only after success
+        @unlink($original);
+        return [
+            'algo' => 'gzip',
+            'original_size_bytes' => $originalSize,
+            'compressed_size_bytes' => $compressedSize,
+            'ratio' => $ratio,
+        ];
     }
 
     public function list(string $remote, bool $full = false, int $limit = 100, bool $bypassCache = false): array {
@@ -395,18 +468,21 @@ class snapshot_manager {
         file_put_contents($file, json_encode($meta, JSON_PRETTY_PRINT));
     }
 
-    private function build_manifest_v2(string $uid, string $type, string $message, array $meta): array {
+    private function build_manifest_v2(string $uid, string $type, string $message, array $meta, ?array $compression = null): array {
         $dir = $this->local_snapshot_dir($uid);
         $files = [];
         $total = 0;
         foreach ($meta['files'] as $name) {
             $path = $dir . '/' . $name;
             $size = is_file($path) ? filesize($path) : 0;
-            $files[] = [
+            $isCompressed = str_ends_with($name, '.gz');
+            $fileEntry = [
                 'name' => $name,
                 'size_bytes' => $size,
-                'compressed' => false,
+                'compressed' => $isCompressed,
             ];
+            if ($isCompressed && $compression) { $fileEntry['compression_algo'] = $compression['algo']; }
+            $files[] = $fileEntry;
             $total += $size;
         }
         $checksums = [
@@ -430,6 +506,16 @@ class snapshot_manager {
             'user' => (string) (get_current_user() ?: ''),
             'php_version' => PHP_VERSION,
         ];
+        $compressionBlock = ['enabled' => false];
+        if ($compression) {
+            $compressionBlock = [
+                'enabled' => true,
+                'algo' => $compression['algo'],
+                'original_size_bytes' => $compression['original_size_bytes'],
+                'compressed_size_bytes' => $compression['compressed_size_bytes'],
+                'ratio' => $compression['ratio'],
+            ];
+        }
         return [
             'schema_version' => 2,
             'uid' => $uid,
@@ -440,7 +526,7 @@ class snapshot_manager {
             'files' => $files,
             'checksums' => $checksums,
             'size_total_bytes' => $total,
-            'compression' => [ 'enabled' => false ],
+            'compression' => $compressionBlock,
             'provenance' => $provenance,
         ];
     }
@@ -482,4 +568,60 @@ class snapshot_manager {
     }
     private function loader(): SnapshotLoader { return $this->loader ??= new SnapshotLoader(); }
     private function dump_resolver(): DumpProviderResolver { return $this->dumpResolver ??= new DumpProviderResolver(); }
+
+    private function write_dump_failure_log(string $tempDir, string $uid, \Throwable $e, float $started, float $finished): void {
+        if (!is_dir($tempDir)) { return; }
+        $logsDir = $tempDir . '/logs';
+        if (!is_dir($logsDir)) { @mkdir($logsDir, 0777, true); }
+        $file = $logsDir . '/dump.log';
+        $lines = [];
+        $lines[] = 'SNAPPY DUMP FAILURE';
+        $lines[] = 'uid: ' . $uid;
+        $lines[] = 'started_at: ' . date('c', (int)$started);
+        $lines[] = 'finished_at: ' . date('c', (int)$finished);
+        $cmdStr = '';
+        $exitCode = '';
+        $stdout = '';
+        $stderr = '';
+        $stdoutTr = false; $stderrTr = false;
+        if ($e instanceof \Snappy\Support\Exception\ProcessFailedException) {
+            $res = $e->result();
+            $cmd = $e->command();
+            if ($cmd) {
+                $parts = [];
+                foreach ($cmd as $c) { $parts[] = preg_match('/\s/', $c) ? escapeshellarg($c) : $c; }
+                $cmdStr = implode(' ', $parts);
+            }
+            if ($res) {
+                $exitCode = (string)$res->exitCode;
+                $stdout = $res->stdout;
+                $stderr = $res->stderr;
+                $stdoutTr = $res->stdoutTruncated; $stderrTr = $res->stderrTruncated;
+            }
+        }
+        $lines[] = 'command: ' . ($cmdStr ?: '(unknown)');
+        $lines[] = 'exit_code: ' . ($exitCode === '' ? '(unknown)' : $exitCode);
+        $lines[] = 'exception: ' . get_class($e) . ': ' . $e->getMessage();
+        $lines[] = 'stdout_truncated: ' . ($stdoutTr ? 'yes' : 'no');
+        $lines[] = 'stderr_truncated: ' . ($stderrTr ? 'yes' : 'no');
+        $lines[] = '--- stdout ---';
+        $lines[] = $stdout;
+        $lines[] = '--- stderr ---';
+        $lines[] = $stderr;
+        $data = implode("\n", $lines) . "\n";
+        @file_put_contents($file, $data);
+    }
+
+    private function recursive_delete(string $dir): void {
+        if (!is_dir($dir)) { return; }
+        $items = @scandir($dir);
+        if (!$items) { return; }
+        foreach ($items as $it) {
+            if ($it === '.' || $it === '..') { continue; }
+            $path = $dir . '/' . $it;
+            if (is_dir($path)) { $this->recursive_delete($path); }
+            else { @unlink($path); }
+        }
+        @rmdir($dir);
+    }
 }
