@@ -25,12 +25,15 @@ class snapshot_show extends base_command {
         if ($uid === '') { $ctx->out->error("no or ambiguous match for '$token' in $remote", 3); return 3; }
         $manifest = $ctx->manager->read_manifest($remote, $uid);
         if (!$manifest) { $ctx->out->error("manifest not found for $uid ($remote)", 4); return 4; }
+        $tagsArr = $manifest['tags'] ?? [];
+        $tagsLine = 'TAGS:       ' . ($tagsArr ? implode(', ', $tagsArr) : '(none)');
         // Text mode lines
         $lines = [
             'UID:        '.($manifest['uid'] ?? $uid),
             'REMOTE:     '.$remote,
             'CREATED:    '.($manifest['created'] ?? ($manifest['created_utc'] ?? '')),
             'TYPE:       '.($manifest['snapshot_type'] ?? ($manifest['type'] ?? '')),
+            $tagsLine,
             'MESSAGE:',
             (string)($manifest['message'] ?? ''),
         ];

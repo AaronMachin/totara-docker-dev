@@ -679,4 +679,39 @@ class snapshot_manager {
         }
         @rmdir($dir);
     }
+    public function add_tag(string $uid, string $tag): bool {
+        $tag = trim($tag);
+        if ($tag === '') { throw new ValidationException('tag required'); }
+        if (!preg_match('/^[a-z0-9][a-z0-9_-]{0,31}$/', $tag)) { throw new ValidationException('invalid tag format'); }
+        $path = $this->local_snapshot_dir($uid) . '/manifest-v2.json';
+        if (!is_file($path)) { throw new SnapshotNotFoundException('Unknown snapshot ' . $uid); }
+        $raw = @json_decode(@file_get_contents($path), true);
+        if (!is_array($raw) || (int)($raw['schema_version'] ?? 0) !== 2) { throw new ValidationException('manifest-v2 invalid for tag update'); }
+        $existing = [];
+        if (isset($raw['tags']) && is_array($raw['tags'])) { foreach ($raw['tags'] as $t) { if (is_string($t)) { $existing[$t] = true; } } }
+        $added = !isset($existing[$tag]);
+        $existing[$tag] = true;
+        $raw['tags'] = array_values(array_keys($existing));
+        $this->write_manifest_v2($uid, $raw);
+        try { $this->indexManager?->addOrUpdate($uid); } catch (\Throwable $e) { /* ignore */ }
+        return $added;
+    }
+    public function remove_tag(string $uid, string $tag): bool {
+        $tag = trim($tag);
+        if ($tag === '') { throw new ValidationException('tag required'); }
+        if (!preg_match('/^[a-z0-9][a-z0-9_-]{0,31}$/', $tag)) { throw new ValidationException('invalid tag format'); }
+        $path = $this->local_snapshot_dir($uid) . '/manifest-v2.json';
+        if (!is_file($path)) { throw new SnapshotNotFoundException('Unknown snapshot ' . $uid); }
+        $raw = @json_decode(@file_get_contents($path), true);
+        if (!is_array($raw) || (int)($raw['schema_version'] ?? 0) !== 2) { throw new ValidationException('manifest-v2 invalid for tag update'); }
+        $existing = [];
+        if (isset($raw['tags']) && is_array($raw['tags'])) { foreach ($raw['tags'] as $t) { if (is_string($t)) { $existing[$t] = true; } } }
+        $removed = isset($existing[$tag]);
+        if ($removed) { unset($existing[$tag]); }
+        if ($existing) { $raw['tags'] = array_values(array_keys($existing)); }
+        else { unset($raw['tags']); }
+        $this->write_manifest_v2($uid, $raw);
+        try { $this->indexManager?->addOrUpdate($uid); } catch (\Throwable $e) { /* ignore */ }
+        return $removed;
+    }
 }

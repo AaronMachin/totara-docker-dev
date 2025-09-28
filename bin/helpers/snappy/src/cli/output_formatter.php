@@ -70,6 +70,7 @@ class output_formatter {
 
     public function error(string $msg, int $code): void {
         if ($this->jsonMode) { $this->errors[] = ['code'=>$code,'message'=>$msg]; return; }
+        if (getenv('SNAPPY_SUPPRESS_TEST_ERRORS')) { return; }
         fwrite(STDERR, 'ERROR(' . $code . '): ' . $msg . "\n");
     }
 
@@ -88,4 +89,3 @@ class output_formatter {
         echo json_encode($out, JSON_UNESCAPED_SLASHES) . "\n";
     }
 }
-
