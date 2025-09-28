@@ -48,8 +48,7 @@ class pull extends base_command {
     }
 
     private function pullFromShareToken(string $token, bool $force, context $ctx): int {
-        try { $decoded = remote_codec::decode($token); }
-        catch (RemoteException $e) { fwrite(STDERR,'decode failed: '.$e->getMessage()."\n"); return 2; }
+        $decoded = remote_codec::decode($token); // allow RemoteException to bubble (mapped to exit code 4)
         if (($decoded['t'] ?? '') !== 'ps' || empty($decoded['u']) || empty($decoded['x'])) { fwrite(STDERR,'invalid share token (expected fields t=ps,u,x)\n'); return 2; }
         if ((int)$decoded['x'] < time()) { fwrite(STDERR,'share token expired\n'); return 2; }
         $url = $decoded['u'];

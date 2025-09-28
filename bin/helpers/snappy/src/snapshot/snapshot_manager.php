@@ -8,13 +8,12 @@ use Snappy\Support\Exception\SnapshotNotFoundException;
 use Snappy\Support\Exception\RemoteException;
 use Snappy\Support\Exception\ProcessFailedException;
 use Throwable;
-use Snappy\Support\Process\process_runner; // updated
-use Snappy\Util\env;
 
 class snapshot_manager {
     private remote_registry $registry;
     private ?remote_snapshot_cache $cache = null;
     private ?SnapshotLoader $loader = null;
+    private ?DumpProviderResolver $dumpResolver = null; // new
 
     public function __construct(remote_registry $registry) {
         $this->registry = $registry;
@@ -66,34 +65,23 @@ class snapshot_manager {
 
     private function create_sql_backup(string $uid, array &$meta): void {
         $dir = $this->local_snapshot_dir($uid);
-        $tdb = trim(env::get('SNAPPY_TDB_BIN', 'tdb')) ?: 'tdb';
-        $command = [$tdb, 'backup', '--alias', $uid];
-        $runner = new process_runner();
-        $result = $runner->run($command);
-        if ($result->exitCode !== 0) {
-            $lines = preg_split('/\r?\n/', $result->stderr); $lines = $lines === false ? [] : $lines;
-            $first = array_slice($lines, 0, 10);
-            $truncatedMsg = implode("\n", $first);
-            if (count($lines) > 10) { $truncatedMsg .= "\n... (stderr truncated)"; }
-            $msg = 'Database backup process failed (exit code ' . $result->exitCode . ") for alias $uid";
-            if ($truncatedMsg !== '') { $msg .= ":\n" . $truncatedMsg; }
-            throw new ProcessFailedException($msg, $result);
+        $context = ['type' => 'sql'];
+        $provider = $this->dump_resolver()->resolve($context);
+        $result = $provider->dump($uid, $dir, ['registry' => $this->registry]);
+        $files = $result->files();
+        if (!$files) { throw new ProcessFailedException('Dump provider produced no files'); }
+        foreach ($files as $file) {
+            $name = $file['name'];
+            $src = $file['path'];
+            if (!is_file($src)) { throw new ProcessFailedException('Dump provider missing file path ' . $src); }
+            $dest = $dir . '/' . $name;
+            if (!@copy($src, $dest)) { throw new ProcessFailedException('Failed to copy dump file to snapshot directory'); }
+            $meta['files'][] = $name;
+            $meta['file_checksums'][$name] = hash_file('sha256', $dest);
         }
-        // Use configured backup path with schema-applied default
-        $config = $this->registry->config_manager()->all();
-        $default_path = $config['options']['backup_path'] ?? '';
-        $candidate = '';
-        if ($default_path && is_dir($default_path)) {
-            $matches = glob(rtrim($default_path, '/') . '/' . $uid . '.*');
-            if ($matches) { $candidate = $matches[0]; }
-        }
-        if (!$candidate || !is_file($candidate)) {
-            throw new ProcessFailedException('Could not locate database backup for uid ' . $uid . ' in ' . $default_path . ' (backup may have failed)');
-        }
-        $backup_file = $dir . '/backup.sql';
-        copy($candidate, $backup_file);
-        $meta['files'][] = 'backup.sql';
-        $meta['file_checksums']['backup.sql'] = hash_file('sha256', $backup_file);
+        // Optionally store metadata from provider (non-breaking addition)
+        $dumpMeta = $result->metadata();
+        if ($dumpMeta) { $meta['dump_metadata'] = $dumpMeta; }
     }
 
     public function list(string $remote, bool $full = false, int $limit = 100, bool $bypassCache = false): array {
@@ -493,4 +481,5 @@ class snapshot_manager {
         ];
     }
     private function loader(): SnapshotLoader { return $this->loader ??= new SnapshotLoader(); }
+    private function dump_resolver(): DumpProviderResolver { return $this->dumpResolver ??= new DumpProviderResolver(); }
 }
