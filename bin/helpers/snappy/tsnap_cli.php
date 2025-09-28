@@ -49,6 +49,7 @@ $router->register('snapshot','show',   new Snappy\Cli\Commands\snapshot_show());
 // Share commands
 $router->register('share','create', new Snappy\Cli\Commands\share_create());
 $router->register('share','list',   new Snappy\Cli\Commands\share_list());
+$router->register('share','fetch',  new Snappy\Cli\Commands\share_fetch());
 // Remote commands (separate handlers per action)
 $router->register('remote','list',    new Snappy\Cli\Commands\remote_list());
 $router->register('remote','add',     new Snappy\Cli\Commands\remote_add());

@@ -43,6 +43,23 @@ class share_registry {
         $this->write($data);
     }
 
+    public function consume(string $rawToken): ?array {
+        $hash = hash('sha256', $rawToken);
+        $data = $this->load();
+        $now = time();
+        $found = null; $changed = false;
+        foreach ($data['tokens'] as &$t) {
+            if (($t['token_hash'] ?? '') !== $hash) { continue; }
+            $expTs = isset($t['expires_utc']) ? strtotime($t['expires_utc']) : 0;
+            if ($expTs && $expTs < $now) { return null; }
+            if (!empty($t['used_utc'])) { return null; }
+            $t['used_utc'] = gmdate('c');
+            $changed = true; $found = $t; break;
+        }
+        if ($changed) { $this->write($data); }
+        return $found; // null if not found/invalid
+    }
+
     private function write(array $data): void {
         $this->ensureDir();
         $path = $this->filePath();
@@ -53,4 +70,3 @@ class share_registry {
         @rename($tmp, $path);
     }
 }
-
