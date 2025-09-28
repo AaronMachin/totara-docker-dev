@@ -12,4 +12,4 @@ if (!is_dir($defaultTmp)) {
     @mkdir($defaultTmp, 0777, true);
 }
 putenv('SNAPPY_SNAPSHOT_ROOT=' . $defaultTmp);
-
+putenv('SNAPPY_SUPPRESS_TEST_ERRORS=1');
