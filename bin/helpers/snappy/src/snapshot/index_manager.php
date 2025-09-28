@@ -23,6 +23,14 @@ class index_manager {
 
     public function __construct(string $basePath) {
         $this->basePath = rtrim($basePath, '/');
+        // Normalize: callers may accidentally pass the /snaps directory itself (e.g. env SNAPPY_SNAPSHOT_BASE=.../snaps).
+        // For index operations we require the parent root containing the /snaps directory.
+        if (basename($this->basePath) === 'snaps') {
+            $parent = dirname($this->basePath);
+            if ($parent !== '' && $parent !== '/' && is_dir($parent)) {
+                $this->basePath = $parent; // adjust to parent root
+            }
+        }
     }
 
     private function loader(): SnapshotLoader { return $this->loader ??= new SnapshotLoader(); }
@@ -134,4 +142,3 @@ class index_manager {
         @rename($tmp, $path);
     }
 }
-
