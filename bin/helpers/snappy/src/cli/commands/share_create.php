@@ -12,28 +12,36 @@ class share_create extends base_command {
     public function examples(): array { return ['tsnap share create a1b2c3','tsnap share create a1b2c3 --expire=30m','tsnap share create a1b2c3 --no-archive']; }
 
     public function run(array $args, context $ctx): int {
-        $tokenArg = null; $expireSpec = '24h'; $noArchive = false;
+        $tokenArg = null; $expireSpec = '24h'; $noArchive = false; $remote = 'local'; $doPresign = false;
         foreach ($args as $a) {
             if ($a !== '' && $a[0] !== '-') { $tokenArg = $a; continue; }
             if (str_starts_with($a,'--expire=')) { $expireSpec = substr($a,9); }
             elseif ($a==='--no-archive') { $noArchive = true; }
+            elseif (str_starts_with($a,'--remote=')) { $remote = substr($a,9); }
+            elseif ($a==='--presign') { $doPresign = true; }
         }
         if ($tokenArg === null) { $ctx->out->error('snapshot uid or unique prefix required', 1); return 1; }
-        $uid = $ctx->manager->resolve_uid($tokenArg, 'local');
-        if ($uid === '') { $ctx->out->error("no or ambiguous match for '$tokenArg' (local)", 3); return 3; }
+        if ($doPresign && $remote === 'local') { $ctx->out->error('--presign requires a non-local --remote', 2); return 2; }
+        $uid = $ctx->manager->resolve_uid($tokenArg, $remote);
+        if ($uid === '') { $ctx->out->error("no or ambiguous match for '$tokenArg' ($remote)", 3); return 3; }
         $ttl = $this->parseExpire($expireSpec);
         if ($ttl <= 0) { $ctx->out->error('invalid --expire specification', 2); return 2; }
         $registry = new share_registry($ctx->registry->local_base_path());
         $raw = $this->generateToken($registry);
         $hash = hash('sha256', $raw);
         $manifest = $ctx->manager->read_manifest('local', $uid) ?? [];
+        if ($remote !== 'local') { // prefer remote manifest/meta if remote provided (only for message/tags fallbacks)
+            $remoteManifest = $ctx->manager->read_manifest($remote, $uid);
+            if ($remoteManifest) { $manifest = $remoteManifest + $manifest; }
+        }
         $message = (string)($manifest['message'] ?? '');
         $firstLine = $message === '' ? '' : preg_split('/\r?\n/', $message, 2)[0];
         $tags = is_array($manifest['tags'] ?? null) ? array_values($manifest['tags']) : [];
         $created = gmdate('c');
-        $expires = gmdate('c', time() + $ttl);
+        $expires_ts = time() + $ttl; $expires = gmdate('c', $expires_ts);
         $meta = [ 'tags' => $tags, 'message_first_line' => $firstLine ];
-        if (!$noArchive) {
+        if ($remote !== 'local') { $meta['remote'] = $remote; }
+        if (!$noArchive && $remote === 'local') { // archives only meaningful from local snapshot data
             try {
                 $archiveInfo = $this->buildArchive($ctx, $uid);
                 if ($archiveInfo) {
@@ -44,6 +52,33 @@ class share_create extends base_command {
             } catch (\Throwable $e) {
                 $ctx->out->error('archive build failed: '.$e->getMessage(), 5);
                 return 5;
+            }
+        }
+        if ($doPresign) {
+            // Validate remote is s3
+            try { $rmeta = $ctx->registry->list()[$remote] ?? null; } catch (\Throwable $e) { $rmeta = null; }
+            if (!$rmeta) { $ctx->out->error('unknown remote '.$remote, 6); return 6; }
+            $rtype = $rmeta['type'] ?? '';
+            if ($rtype !== 's3') { $ctx->out->error('--presign only supported for s3 remotes', 7); return 7; }
+            try {
+                $storage = $ctx->registry->storage($remote);
+                if (!method_exists($storage, 'presign_get_url')) { throw new \RuntimeException('storage missing presign capability'); }
+                $remoteMeta = $ctx->manager->read_meta($remote, $uid);
+                if (!$remoteMeta) { $ctx->out->error('snapshot not present on remote '.$remote, 8); return 8; }
+                $files = $remoteMeta['files'] ?? [];
+                $presigned = [];
+                foreach ($files as $file) {
+                    $key = 'snaps/' . $uid . '/' . $file;
+                    $url = $storage->presign_get_url($key, $expires_ts);
+                    $presigned[] = ['file' => $file, 'url' => $url, 'expires_utc' => $expires];
+                }
+                // manifest-v2 always included as virtual presign target
+                $mfile = 'manifest-v2.json';
+                $murl = $storage->presign_get_url('snaps/' . $uid . '/' . $mfile, $expires_ts);
+                $presigned[] = ['file' => $mfile, 'url' => $murl, 'expires_utc' => $expires];
+                $meta['presigned'] = $presigned;
+            } catch (\Throwable $e) {
+                $ctx->out->error('failed to generate presigned URLs: '.$e->getMessage(), 9); return 9;
             }
         }
         $record = [
@@ -57,10 +92,12 @@ class share_create extends base_command {
         $registry->add($record);
         $ctx->out->info('Snapshot UID: ' . $uid);
         if (isset($meta['archive_path'])) { $ctx->out->info('Archive: ' . $meta['archive_path']); }
+        if (!empty($meta['presigned'])) { $ctx->out->info('Presigned: '.count($meta['presigned']).' objects'); }
         $ctx->out->info('Share token (store securely; shown once): ' . $raw);
         $ctx->out->info('Expires: ' . $expires);
         $payload = ['uid'=>$uid,'share_token'=>$raw,'expires_utc'=>$expires];
         if (isset($meta['archive_path'])) { $payload['archive_path'] = $meta['archive_path']; }
+        if (!empty($meta['presigned'])) { $payload['presigned_count'] = count($meta['presigned']); }
         $ctx->out->json($payload);
         return 0;
     }

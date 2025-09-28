@@ -381,4 +381,36 @@ class s3_storage implements storage {
             }
         }
     }
+
+    public function presign_get_url(string $key, int $expires_ts): string {
+        // Cap expiry per AWS (max 7 days)
+        $now = time();
+        if ($expires_ts <= $now) { $expires_ts = $now + 60; }
+        $max = $now + 604800; // 7d
+        if ($expires_ts > $max) { $expires_ts = $max; }
+        [$scheme, $host, $uri] = $this->build_host_uri($key);
+        $amz_date = gmdate('Ymd\THis\Z', $now);
+        $date = gmdate('Ymd', $now);
+        $scope = $date . '/' . $this->region . '/s3/aws4_request';
+        $credential = rawurlencode($this->key . '/' . $scope);
+        $expires = $expires_ts - $now;
+        if ($expires < 1) { $expires = 60; }
+        $query_params = [
+            'X-Amz-Algorithm' => 'AWS4-HMAC-SHA256',
+            'X-Amz-Credential' => $credential,
+            'X-Amz-Date' => $amz_date,
+            'X-Amz-Expires' => (string)$expires,
+            'X-Amz-SignedHeaders' => 'host',
+        ];
+        ksort($query_params);
+        $canonical_query = [];
+        foreach ($query_params as $k => $v) { $canonical_query[] = rawurlencode($k) . '=' . rawurlencode($v); }
+        $canonical_query_str = implode('&', $canonical_query);
+        $canonical_request = 'GET' . "\n" . $uri . "\n" . $canonical_query_str . "\n" . 'host:' . $host . "\n\n" . 'host' . "\nUNSIGNED-PAYLOAD";
+        $string_to_sign = 'AWS4-HMAC-SHA256' . "\n" . $amz_date . "\n" . $scope . "\n" . hash('sha256', $canonical_request);
+        $signing_key = $this->signing_key($date, $this->region, 's3');
+        $signature = hash_hmac('sha256', $string_to_sign, $signing_key);
+        $url = $scheme . '://' . $host . $uri . '?' . $canonical_query_str . '&X-Amz-Signature=' . $signature;
+        return $url;
+    }
 }
