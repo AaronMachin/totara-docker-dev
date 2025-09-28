@@ -47,12 +47,14 @@
         "required": ["name", "size_bytes", "compressed"],
         "properties": {
           "name": { "type": "string", "minLength": 1 },
-            "size_bytes": { "type": "integer", "minimum": 0 },
-            "compressed": { "type": "boolean" },
-            "compression_algo": {
-              "type": "string",
-              "description": "Compression algorithm used if compressed is true (e.g. gzip, zstd)."
-            }
+          "size_bytes": { "type": "integer", "minimum": 0 },
+          "compressed": { "type": "boolean" },
+          "compression_algo": {
+            "type": "string",
+            "description": "Compression algorithm used if compressed is true (e.g. gzip, zstd)."
+          },
+          "object_hash": { "type": "string", "pattern": "^[a-f0-9]{64}$", "description": "SHA256 content hash when stored via hash store prototype." },
+          "stored_inline": { "type": "boolean", "description": "True if file bytes are unique to snapshot directory; false if referenced object." }
         },
         "allOf": [
           {
@@ -134,4 +136,3 @@
     }
   }
 }
-

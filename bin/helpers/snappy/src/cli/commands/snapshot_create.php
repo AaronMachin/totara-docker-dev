@@ -10,16 +10,17 @@ use Throwable;
 class snapshot_create extends base_command {
     public function name(): string { return 'snapshot.create'; }
     public function description(): string { return 'Create a snapshot (snapshot create)'; }
-    public function usage(): string { return 'Usage: tsnap snapshot create [-m <message>] [--type=sql] [--compress] [--keep-failed] [--tag=TAG] [--tags=CSV]\nCreates a snapshot. If -m omitted an editor will open.'; }
-    public function examples(): array { return ['tsnap snapshot create -m "initial load"','tsnap snapshot create --compress -m "before upgrade"','tsnap snapshot create --tag=release --tag=pre_migration -m "pre migration"','tsnap snapshot create --tags=alpha,beta -m tagged']; }
+    public function usage(): string { return 'Usage: tsnap snapshot create [-m <message>] [--type=sql] [--compress] [--hash-store] [--keep-failed] [--tag=TAG] [--tags=CSV]\nCreates a snapshot. If -m omitted an editor will open.'; }
+    public function examples(): array { return ['tsnap snapshot create -m "initial load"','tsnap snapshot create --compress -m "before upgrade"','tsnap snapshot create --hash-store -m "dedup attempt"','tsnap snapshot create --tag=release --tag=pre_migration -m "pre migration"','tsnap snapshot create --tags=alpha,beta -m tagged']; }
 
     public function run(array $args, context $ctx): int {
-        $type = 'sql'; $message = ''; $compress = false; $keepFailed = false; $tags = [];
+        $type = 'sql'; $message = ''; $compress = false; $keepFailed = false; $hashStore = false; $tags = [];
         for ($i=0;$i<count($args);$i++) {
             $arg = $args[$i];
             if (str_starts_with($arg,'--type=')) { $type = substr($arg,7); }
             elseif ($arg==='-m' && isset($args[$i+1])) { $message = $args[$i+1]; $i++; }
             elseif ($arg==='--compress') { $compress = true; }
+            elseif ($arg==='--hash-store') { $hashStore = true; }
             elseif ($arg==='--keep-failed') { $keepFailed = true; }
             elseif (str_starts_with($arg,'--tag=')) { $tags[] = substr($arg,6); }
             elseif (str_starts_with($arg,'--tags=')) { $csv = substr($arg,7); if ($csv!=='') { foreach (explode(',', $csv) as $t) { $tags[] = $t; } } }
@@ -38,10 +39,10 @@ class snapshot_create extends base_command {
             $message = editor::acquire($tpl);
             if ($message==='') { $ctx->out->error('snapshot message required', 4); return 4; }
         }
-        try { $uid = $ctx->manager->create($type,$message,'local',$compress,$keepFailed); }
+        try { $uid = $ctx->manager->create($type,$message,'local',$compress,$keepFailed,$hashStore); }
         catch (ValidationException $ve) { throw $ve; }
         catch (Throwable $e) { $ctx->out->error('create failed: '.$e->getMessage(), 1); return 1; }
-        // Apply tags post-create (idempotent) to avoid altering manager create signature
+        // Apply tags post-create (idempotent) to avoid altering manager create signature (beyond new flag)
         foreach ($tags as $t) {
             try { $ctx->manager->add_tag($uid, $t); } catch (ValidationException $ve) { /* should not happen due to early validation */ } }
         // Fallback: if tags expected but manifest missing tags (edge race), patch directly
@@ -59,7 +60,7 @@ class snapshot_create extends base_command {
         $finalManifest = $ctx->manager->read_manifest('local',$uid) ?? [];
         if ($tags) { $ctx->out->info('tags: '.implode(',', $tags)); $ctx->out->info("created snapshot $uid"); }
         else { $ctx->out->info("created snapshot $uid"); }
-        $ctx->out->json(['uid'=>$uid,'type'=>$type,'compressed'=>$compress,'keep_failed'=>$keepFailed,'tags'=>$finalManifest['tags'] ?? []]);
+        $ctx->out->json(['uid'=>$uid,'type'=>$type,'compressed'=>$compress,'keep_failed'=>$keepFailed,'hash_store'=>$hashStore,'tags'=>$finalManifest['tags'] ?? []]);
         return 0;
     }
 }

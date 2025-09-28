@@ -30,7 +30,7 @@ class snapshot_manager {
     public function set_index(index_manager $index): void { $this->indexManager = $index; }
     public function set_remote_index(remote_index_manager $rim): void { $this->remoteIndexManager = $rim; }
 
-    public function create(string $type, string $message, string $remote = 'local', bool $compress = false, bool $keepFailed = false): string {
+    public function create(string $type, string $message, string $remote = 'local', bool $compress = false, bool $keepFailed = false, bool $hashStore = false): string {
         if ($remote !== 'local') { throw new ValidationException('Snapshots can only be created in local remote then pushed'); }
         $uid = snapshot_uid::generate();
         $meta = [
@@ -53,10 +53,10 @@ class snapshot_manager {
                 try { $compressionInfo = $this->apply_compression($uid, $meta, $tempDir); }
                 catch (Throwable $e) { throw new ProcessFailedException('Compression failed: '.$e->getMessage()); }
             }
+            if ($hashStore) { $this->apply_hash_store($uid, $meta, $tempDir); }
             // Promote temp -> final (atomic if same filesystem)
             if (!@rename($tempDir, $finalDir)) {
-                throw new ProcessFailedException('Failed to promote snapshot directory');
-            }
+                throw new ProcessFailedException('Failed to promote snapshot directory'); }
             // Build & write manifest-v2.json before legacy meta.json
             try {
                 $manifest = $this->build_manifest_v2($uid, $type, $message, $meta, $compressionInfo);
@@ -64,15 +64,12 @@ class snapshot_manager {
                 $this->write_manifest_v2($uid, $manifest);
             } catch (Throwable $e) { throw $e; }
             $this->write_meta('local', $uid, $meta);
-            // Update local index (best effort)
             try { $this->indexManager?->addOrUpdate($uid); } catch (Throwable $e) { /* ignore index failures */ }
             return $uid;
         } catch (Throwable $e) {
-            // Write failure log (best-effort)
             $this->write_dump_failure_log($tempDir, $uid, $e, $started, microtime(true));
             if (!$keepFailed) { $this->recursive_delete($tempDir); }
-            throw $e; // propagate
-        }
+            throw $e; }
     }
 
     private function temp_snapshot_dir(string $uid): string {
@@ -166,6 +163,31 @@ class snapshot_manager {
             'compressed_size_bytes' => $compressedSize,
             'ratio' => $ratio,
         ];
+    }
+
+    private function apply_hash_store(string $uid, array &$meta, string $workDir): void {
+        $base = rtrim($this->registry->local_base_path(), '/');
+        foreach ($meta['files'] as $name) {
+            $path = $workDir . '/' . $name;
+            if (!is_file($path)) { continue; }
+            $hash = $meta['file_checksums'][$name] ?? hash_file('sha256', $path);
+            if (!isset($meta['file_checksums'][$name])) { $meta['file_checksums'][$name] = $hash; }
+            $prefix = substr($hash, 0, 2);
+            $objDir = $base . '/objects/sha256/' . $prefix;
+            $objPath = $objDir . '/' . $hash;
+            if (!is_dir($objDir)) { @mkdir($objDir, 0777, true); }
+            if (!is_file($objPath)) {
+                if (!@rename($path, $objPath)) { @copy($path, $objPath); }
+            } else {
+                if (is_file($path)) { @unlink($path); }
+            }
+            if (!is_file($path)) {
+                $linked = false;
+                if (function_exists('link')) { $linked = @link($objPath, $path); }
+                if (!$linked) { @copy($objPath, $path); }
+            }
+            $meta['object_map'][$name] = [ 'hash' => $hash, 'stored_inline' => false ];
+        }
     }
 
     public function list(string $remote, bool $full = false, int $limit = 100, bool $bypassCache = false): array {
@@ -531,61 +553,28 @@ class snapshot_manager {
             $path = $dir . '/' . $name;
             $size = is_file($path) ? filesize($path) : 0;
             $isCompressed = str_ends_with($name, '.gz');
-            $fileEntry = [
-                'name' => $name,
-                'size_bytes' => $size,
-                'compressed' => $isCompressed,
-            ];
-            if ($isCompressed && $compression) { $fileEntry['compression_algo'] = $compression['algo']; }
+            $fileEntry = [ 'name' => $name, 'size_bytes' => $size, 'compressed' => $isCompressed ];
+            if ($isCompressed && isset($meta['compression_algo_map'][$name])) { $fileEntry['compression_algo'] = $meta['compression_algo_map'][$name]; }
+            elseif ($isCompressed && isset($compression['algo'])) { $fileEntry['compression_algo'] = $compression['algo']; }
+            if (isset($meta['object_map'][$name])) {
+                $fileEntry['object_hash'] = $meta['object_map'][$name]['hash'];
+                $fileEntry['stored_inline'] = (bool)$meta['object_map'][$name]['stored_inline'];
+            } else {
+                $fileEntry['stored_inline'] = true;
+            }
             $files[] = $fileEntry;
             $total += $size;
         }
-        $checksums = [
-            'algo' => 'sha256',
-            'files' => [],
-        ];
-        foreach (($meta['file_checksums'] ?? []) as $file => $hash) {
-            $checksums['files'][$file] = $hash;
-        }
+        $checksums = [ 'algo' => 'sha256', 'files' => [] ];
+        foreach (($meta['file_checksums'] ?? []) as $file => $hash) { $checksums['files'][$file] = $hash; }
         $argv = $GLOBALS['argv'] ?? [];
         $command_line = '';
-        if ($argv && is_array($argv)) {
-            // best-effort reproduction; avoid quoting explosion
-            $parts = [];
-            foreach ($argv as $a) { $parts[] = strpos($a, ' ') !== false ? escapeshellarg($a) : $a; }
-            $command_line = implode(' ', $parts);
-        }
-        $provenance = [
-            'command_line' => $command_line,
-            'host' => (string) (gethostname() ?: php_uname('n')),
-            'user' => (string) (get_current_user() ?: ''),
-            'php_version' => PHP_VERSION,
-        ];
+        if ($argv && is_array($argv)) { $parts = []; foreach ($argv as $a) { $parts[] = strpos($a, ' ') !== false ? escapeshellarg($a) : $a; } $command_line = implode(' ', $parts); }
+        $provenance = [ 'command_line' => $command_line, 'host' => (string)(gethostname() ?: php_uname('n')), 'user' => (string)(get_current_user() ?: ''), 'php_version' => PHP_VERSION ];
         $compressionBlock = ['enabled' => false];
-        if ($compression) {
-            $compressionBlock = [
-                'enabled' => true,
-                'algo' => $compression['algo'],
-                'original_size_bytes' => $compression['original_size_bytes'],
-                'compressed_size_bytes' => $compression['compressed_size_bytes'],
-                'ratio' => $compression['ratio'],
-            ];
-        }
-        return [
-            'schema_version' => 2,
-            'uid' => $uid,
-            'created_utc' => gmdate('Y-m-d\TH:i:s\Z'),
-            'snapshot_type' => $type,
-            'message' => $message,
-            // 'tags' => [], // optional; omitted for now
-            'files' => $files,
-            'checksums' => $checksums,
-            'size_total_bytes' => $total,
-            'compression' => $compressionBlock,
-            'provenance' => $provenance,
-        ];
+        if ($compression) { $compressionBlock = [ 'enabled' => true, 'algo' => $compression['algo'], 'original_size_bytes' => $compression['original_size_bytes'], 'compressed_size_bytes' => $compression['compressed_size_bytes'], 'ratio' => $compression['ratio'] ]; }
+        return [ 'schema_version' => 2, 'uid' => $uid, 'created_utc' => gmdate('Y-m-d\TH:i:s\Z'), 'snapshot_type' => $type, 'message' => $message, 'files' => $files, 'checksums' => $checksums, 'size_total_bytes' => $total, 'compression' => $compressionBlock, 'provenance' => $provenance ];
     }
-
     private function write_manifest_v2(string $uid, array $manifest): void {
         $dir = $this->local_snapshot_dir($uid);
         $target = $dir . '/manifest-v2.json';
