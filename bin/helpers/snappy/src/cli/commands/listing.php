@@ -10,8 +10,8 @@ use Snappy\Snapshot\remote_snapshot_cache;
 class listing extends base_command {
     public function name(): string { return 'list'; }
     public function description(): string { return 'List snapshots'; }
-    public function usage(): string { return 'Usage: tsnap list [--full|--full-message] [--limit=N] [--remote=name1,name2] [--since=EXPR] [--before=EXPR] [--no-parallel] [--live]
-List snapshots across selected remotes. --since/--before accept strtotime expressions or relative (10m,2h,3d). Use --live to bypass cache.'; }
+    public function usage(): string { return 'Usage: tsnap list [--full|--full-message] [--limit=N] [--remote=name1,name2] [--since=EXPR] [--before=EXPR] [--no-parallel] [--live] [--no-index]
+List snapshots across selected remotes. --since/--before accept strtotime expressions or relative (10m,2h,3d). Use --live to bypass cache. Use --no-index to force manifest scan for local.'; }
     public function examples(): array { return ['tsnap list','tsnap list --full --limit=20','tsnap list --remote=origin,backup --since=2d','tsnap list --live --remote=origin']; }
 
     public function run(array $args, context $ctx): int {
@@ -23,11 +23,12 @@ List snapshots across selected remotes. --since/--before accept strtotime expres
         $sinceExpr = $opts['since'];
         $beforeExpr = $opts['before'];
         $live = $opts['live'];
+        $noIndex = $opts['no_index'];
         $sinceTs = $sinceExpr ? $this->parse_time($sinceExpr) : null;
         $beforeTs = $beforeExpr ? $this->parse_time($beforeExpr) : null;
         $selected = $this->selectRemotes($remoteCsv, $ctx);
         if ($selected === null) { return 2; }
-        [$rows, $cacheInfo, $staleRemotes] = $this->collectRows($selected, $full, $limit, $live, $ctx);
+        [$rows, $cacheInfo, $staleRemotes] = $this->collectRows($selected, $full, $limit, $live, $ctx, $noIndex);
         $rows = $this->applyTimeFilters($rows, $sinceTs, $beforeTs);
         $this->render($rows, $selected, $cacheInfo, $staleRemotes, $full, $limit, $live, $ctx);
         return 0;
@@ -41,6 +42,7 @@ List snapshots across selected remotes. --since/--before accept strtotime expres
             'since' =>['prefix'=>'--since=','type'=>'string','default'=>null],
             'before'=>['prefix'=>'--before=','type'=>'string','default'=>null],
             'live'  =>['flags'=>['--live'],'type'=>'bool','default'=>false],
+            'no_index'=>['flags'=>['--no-index'],'type'=>'bool','default'=>false],
         ];
         $parsed = $this->parseArgs($argv, $def);
         return [$parsed['options'], $parsed['errors']];
@@ -59,12 +61,12 @@ List snapshots across selected remotes. --since/--before accept strtotime expres
         return array_values(array_unique($out));
     }
 
-    private function collectRows(array $selected, bool $full, int $limit, bool $live, context $ctx): array {
+    private function collectRows(array $selected, bool $full, int $limit, bool $live, context $ctx, bool $noIndex = false): array {
         usort($selected, function($a,$b){ if($a==='local'&&$b!=='local') return -1; if($b==='local'&&$a!=='local') return 1; return strcmp($a,$b); });
         $cacheInfo=[]; $staleRemotes=[]; $rows=[];
         foreach ($selected as $remote) {
             if ($remote==='local') {
-                $localRows = $ctx->manager->list('local', $full, $limit);
+                $localRows = $ctx->manager->list('local', $full, $limit, $noIndex); // pass noIndex as bypass flag
                 foreach ($localRows as $rrow) { $rows[$rrow['uid']] = $rows[$rrow['uid']] ?? $rrow; $rows[$rrow['uid']]['locations'] = isset($rows[$rrow['uid']]['locations']) ? $rows[$rrow['uid']]['locations'].', local' : 'local'; }
                 continue;
             }

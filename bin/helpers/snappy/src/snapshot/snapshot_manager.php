@@ -15,6 +15,7 @@ class snapshot_manager {
     private ?remote_snapshot_cache $cache = null;
     private ?SnapshotLoader $loader = null;
     private ?DumpProviderResolver $dumpResolver = null; // new
+    private ?index_manager $indexManager = null; // local index manager (optional)
 
     public function __construct(remote_registry $registry) {
         $this->registry = $registry;
@@ -25,6 +26,7 @@ class snapshot_manager {
     public function registry(): remote_registry {
         return $this->registry;
     }
+    public function set_index(index_manager $index): void { $this->indexManager = $index; }
 
     public function create(string $type, string $message, string $remote = 'local', bool $compress = false, bool $keepFailed = false): string {
         if ($remote !== 'local') { throw new ValidationException('Snapshots can only be created in local remote then pushed'); }
@@ -60,6 +62,8 @@ class snapshot_manager {
                 $this->write_manifest_v2($uid, $manifest);
             } catch (Throwable $e) { throw $e; }
             $this->write_meta('local', $uid, $meta);
+            // Update local index (best effort)
+            try { $this->indexManager?->addOrUpdate($uid); } catch (Throwable $e) { /* ignore index failures */ }
             return $uid;
         } catch (Throwable $e) {
             // Write failure log (best-effort)
@@ -158,6 +162,24 @@ class snapshot_manager {
     }
 
     public function list(string $remote, bool $full = false, int $limit = 100, bool $bypassCache = false): array {
+        // Local index fast-path (when remote local and not bypass flag and not requesting full message)
+        if ($remote === 'local' && !$bypassCache && !$full && $this->indexManager) {
+            $idx = $this->indexManager->load();
+            if ($idx && isset($idx['snapshots']) && is_array($idx['snapshots'])) {
+                $rows = [];
+                foreach ($idx['snapshots'] as $row) {
+                    $rows[] = [
+                        'uid' => $row['uid'],
+                        'created' => $row['created_utc'] ?? '',
+                        'type' => $row['type'] ?? '',
+                        'message' => $row['message_first'] ?? '',
+                    ];
+                }
+                usort($rows, fn($a,$b)=>strcmp($b['created'],$a['created']));
+                if (count($rows) > $limit) { $rows = array_slice($rows, 0, $limit); }
+                return $rows;
+            }
+        }
         if ($remote !== 'local' && $this->cache && !$bypassCache) {
             $c = $this->cache->load($remote);
             if ($c) {
@@ -183,7 +205,7 @@ class snapshot_manager {
         $snapshots = [];
         foreach ($objects as $o) {
             $key = $o['key'];
-            if (preg_match('#^snaps/([^/]+)/meta\.json$#', $key, $m)) {
+            if (preg_match('#^snaps/([^/]+)/meta\\.json$#', $key, $m)) {
                 $uid = $m[1];
                 $snapshots[$uid] = ['uid' => $uid, 'meta_key' => $key, 'last_modified' => $o['last_modified']];
             }

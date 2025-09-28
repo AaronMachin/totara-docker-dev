@@ -84,7 +84,7 @@ class SnapshotLoader {
         foreach (($meta['files'] ?? []) as $name) {
             $path = $dir . '/' . $name;
             $size = is_file($path) ? filesize($path) : 0;
-            $files[] = [ 'name' => $name, 'size_bytes' => $size, 'compressed' => false ];
+            $files[] = [ 'name' => $name, 'size_bytes' => $size, 'compressed' => str_ends_with($name, '.gz') ];
             $total += $size;
         }
         $checksums = is_array($meta['file_checksums'] ?? null) ? $meta['file_checksums'] : [];

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 use PHPUnit\Framework\TestCase;
 
+require_once __DIR__ . '/AbstractCliTestCase.php'; // ensure base class loaded before use
+
 // Extend new base for CLI tests
 final class DispatcherExitCodesTest extends AbstractCliTestCase
 {

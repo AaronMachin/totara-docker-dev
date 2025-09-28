@@ -20,6 +20,7 @@ use Snappy\Snapshot\snapshot_manager;
 use Snappy\Snapshot\remote_snapshot_cache;
 use Snappy\Cli\command;
 use Snappy\Config\config_manager;
+use Snappy\Snapshot\index_manager; // new
 
 // Build core context (multi-remote). Local remote always present.
 // Load config first (using a provisional base path); then derive snapshot root from config schema default/user value.
@@ -40,7 +41,9 @@ $remoteRegistry = new remote_registry($config, $snapshotBase);
 $manager = new snapshot_manager($remoteRegistry);
 $cache = new remote_snapshot_cache($snapshotBase);
 $manager->set_cache($cache);
-$ctx = new context($config, $remoteRegistry, $manager, $cache);
+$index = new index_manager($snapshotBase); // create index manager
+$manager->set_index($index); // inject
+$ctx = new context($config, $remoteRegistry, $manager, $cache, $index);
 
 // Dynamic command discovery
 $commands = [];
