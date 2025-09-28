@@ -8,6 +8,7 @@ use Snappy\Support\Exception\ValidationException;
 use Snappy\Storage\storage;
 use Snappy\Storage\local_storage;
 use Snappy\Storage\s3_storage;
+use Snappy\Storage\fake_storage; // for memory test remotes
 use Snappy\Config\config_manager;
 
 class remote_registry {
@@ -78,7 +79,7 @@ class remote_registry {
         if ($name === 'local') { throw new ValidationException('Cannot redefine reserved remote "local"'); }
         if (!preg_match('/^[a-zA-Z0-9._-]+$/', $name)) { throw new ValidationException('Invalid remote name'); }
         if ($this->has($name)) { throw new ValidationException('Remote already exists: ' . $name); }
-        if (!in_array($type, ['s3'], true)) { throw new ValidationException('Unsupported remote type: ' . $type); }
+        if (!in_array($type, ['s3','memory'], true)) { throw new ValidationException('Unsupported remote type: ' . $type); }
         if ($type === 's3') {
             $defaults = $this->cfg->get('options.s3', []);
             $autoKeys = ['endpoint', 'bucket', 'region', 'key', 'secret', 'path_style', 'debug'];
@@ -102,12 +103,9 @@ class remote_registry {
             }
         }
         $entry = ['type' => $type, 'created' => date('c')];
-        if ($type === 's3') {
-            $entry['config'] = $config;
-        }
-        if ($type === 'local') {
-            $entry['path'] = $config['path'] ?? $this->base_path;
-        }
+        if ($type === 's3') { $entry['config'] = $config; }
+        if ($type === 'local') { $entry['path'] = $config['path'] ?? $this->base_path; }
+        // memory has no extra config
         $this->cfg->set('remotes.' . $name, $entry)->save();
         unset($this->storage_cache[$name]);
     }
@@ -128,6 +126,7 @@ class remote_registry {
         $type = $meta['type'] ?? '';
         if ($type === 'local') { $st = new local_storage($meta['path']); }
         elseif ($type === 's3') { $st = new s3_storage($meta['config'] ?? []); }
+        elseif ($type === 'memory') { $st = new fake_storage(); }
         else { throw new ValidationException('Unsupported remote type ' . $type); }
         return $this->storage_cache[$name] = $st;
     }

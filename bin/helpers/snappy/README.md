@@ -159,6 +159,36 @@ Integrity
 - push: validates local file checksums before upload.
 - pull: validates downloaded files against meta checksums.
 
+Local & Remote Summary Indexes (T4.2)
+-------------------------------------
+Snappy maintains compact JSON summary indexes to provide O(1) listings without scanning object stores:
+
+- Local index: snaps/index.json (version 1) updated automatically on snapshot creation or rebuild. Contains an array of snapshot summary rows (uid, created_utc, first message line, tags, size, compression flag, file count, optional type).
+- Remote index: snaps/index.json (same schema) uploaded/updated on each push (last write wins). This avoids expensive remote prefix scans during listing.
+
+Listing Behavior:
+- list local (default) uses local index fast-path unless --no-index or --full requested (full requires full message which may include newlines not stored verbatim in the index).
+- list --remote=<r> uses (in order): remote snapshot cache (if fresh), else remote index (if present), else falls back to on-demand meta.json scan.
+- Corrupt or missing indexes trigger fallback scanning; subsequent push recreates remote index; local corrupt index triggers auto rebuild.
+
+Failure & Consistency Notes:
+- Remote index updates are best-effort; partial/failed writes do not block push completion.
+- Concurrent pushes may race; last writer wins; no merge strategy (acceptable per design scope).
+- If a snapshot is later deleted server-side, the remote index may contain stale entries until the next push or a future maintenance command (future task).
+
+Memory / In-Memory Test Remote:
+- A lightweight in-process 'memory' remote type backed by fake_storage exists for unit tests only; not intended for production usage. It enables fast verification of remote index logic without external services.
+
+Commands Impacted:
+- push: now appends/updates remote summary index after object uploads.
+- list: adds remote index fast-path.
+
+Schema Stability:
+- Index schema version is 1; changes require bump + backward handling; current implementation treats unknown/invalid content as trigger to rebuild (local) or fallback (remote).
+
+Extending Index Content:
+- Additional fields (e.g. tags, custom metadata) can be added in future versions; keep entries small to preserve fast transfer and low memory overhead.
+
 Extending Snapshot Types
 ------------------------
 Add branch in snapshot_manager::create() and produce files + checksums before write_meta().

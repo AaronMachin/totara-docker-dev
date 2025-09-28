@@ -16,6 +16,7 @@ class snapshot_manager {
     private ?SnapshotLoader $loader = null;
     private ?DumpProviderResolver $dumpResolver = null; // new
     private ?index_manager $indexManager = null; // local index manager (optional)
+    private ?remote_index_manager $remoteIndexManager = null; // remote summary index manager
 
     public function __construct(remote_registry $registry) {
         $this->registry = $registry;
@@ -27,6 +28,7 @@ class snapshot_manager {
         return $this->registry;
     }
     public function set_index(index_manager $index): void { $this->indexManager = $index; }
+    public function set_remote_index(remote_index_manager $rim): void { $this->remoteIndexManager = $rim; }
 
     public function create(string $type, string $message, string $remote = 'local', bool $compress = false, bool $keepFailed = false): string {
         if ($remote !== 'local') { throw new ValidationException('Snapshots can only be created in local remote then pushed'); }
@@ -199,6 +201,24 @@ class snapshot_manager {
                 return $rows;
             }
             // fall through to live listing if no cache
+        }
+        // Remote index fast-path (when remote not local, not requesting full message, and not using cache)
+        if ($remote !== 'local' && !$full && $this->remoteIndexManager) {
+            $ridx = $this->remoteIndexManager->load_for_remote($remote);
+            if ($ridx && isset($ridx['snapshots']) && is_array($ridx['snapshots'])) {
+                $rows = [];
+                foreach ($ridx['snapshots'] as $row) {
+                    $rows[] = [
+                        'uid' => $row['uid'],
+                        'created' => $row['created_utc'] ?? '',
+                        'type' => $row['type'] ?? '',
+                        'message' => $row['message_first'] ?? '',
+                    ];
+                }
+                usort($rows, fn($a,$b)=>strcmp($b['created'],$a['created']));
+                if (count($rows) > $limit) { $rows = array_slice($rows, 0, $limit); }
+                return $rows;
+            }
         }
         $storage = $this->registry->storage($remote);
         $objects = $storage->list_objects('snaps/', $limit * 10); // overscan to filter meta
@@ -401,6 +421,8 @@ class snapshot_manager {
         $target->put_object('snaps/' . $uid . '/meta.json', $tmp_meta);
         @unlink($tmp_meta);
         $count++;
+        // Update remote index (best-effort)
+        try { $this->remoteIndexManager?->addOrUpdate($target_remote, $uid); } catch (\Throwable $e) { /* ignore */ }
         return $count;
     }
 

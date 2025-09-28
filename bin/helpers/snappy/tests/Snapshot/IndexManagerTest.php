@@ -62,7 +62,7 @@ PHP;
         putenv('SNAPPY_TEST_BACKUP_PATH=' . $this->backupPath);
     }
 
-    private function makeManager(index_manager &$indexOut = null): snapshot_manager
+    private function makeManager(?index_manager &$indexOut = null): snapshot_manager
     {
         $cfg = $this->makeConfig();
         $registry = new remote_registry($cfg, $this->root);
@@ -135,4 +135,3 @@ PHP;
         @rmdir($dir);
     }
 }
-
