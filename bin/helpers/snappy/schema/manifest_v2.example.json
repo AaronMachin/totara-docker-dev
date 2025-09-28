@@ -9,8 +9,10 @@
   ],
   "checksums": {
     "algo": "sha256",
-    "files": { "backup.sql": "0000000000000000000000000000000000000000000000000000000000000000" }
-  ],
+    "files": {
+      "backup.sql": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  },
   "size_total_bytes": 123,
   "compression": { "enabled": false },
   "provenance": {

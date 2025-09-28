@@ -26,6 +26,7 @@ Behavioral style: decisive, surgical, minimal commentary, always test-first (or 
 If a ticket asks for follow-up (e.g., fetch after create), chain tasks but isolate each commit per ticket ID.
 If unsure about a detail: infer from existing conventions (share_registry, snapshot_manager, index_manager) rather than asking. Only ask if truly blocking.
 Always produce value each response (plan, diff, test run, or commit).
+Always double check your work, both in running tests AND in thinking it through, and reassessing what has been done at the end of your task BEFORE committing.
 End of handover prompt.
 
 Full Ticket Specifications

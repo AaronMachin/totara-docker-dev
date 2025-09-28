@@ -23,16 +23,22 @@ class gc_objects extends base_command {
         $snapsDir = $base . '/snaps';
         $objectsDir = $base . '/objects/sha256';
         $referenced = [];
+        $manifestsScanned = 0; $manifestsSkipped = 0; $manifestsErrored = 0;
         if (is_dir($snapsDir)) {
             $entries = @scandir($snapsDir) ?: [];
             foreach ($entries as $e) {
                 if ($e === '.' || $e === '..') { continue; }
-                $man = $snapsDir . '/' . $e . '/manifest-v2.json';
-                if (!is_file($man)) { continue; }
-                $raw = @json_decode(@file_get_contents($man), true);
-                if (!is_array($raw)) { continue; }
+                $manDir = $snapsDir . '/' . $e;
+                if (!is_dir($manDir)) { continue; }
+                $man = $manDir . '/manifest-v2.json';
+                if (!is_file($man)) { $manifestsSkipped++; continue; }
+                $rawJson = @file_get_contents($man);
+                if ($rawJson === false || $rawJson === '') { $manifestsErrored++; continue; }
+                $raw = @json_decode($rawJson, true);
+                if (!is_array($raw)) { $manifestsErrored++; continue; }
                 $files = $raw['files'] ?? [];
-                if (!is_array($files)) { continue; }
+                if (!is_array($files)) { $manifestsSkipped++; continue; }
+                $manifestsScanned++;
                 foreach ($files as $f) {
                     if (is_array($f) && isset($f['object_hash']) && is_string($f['object_hash']) && $f['object_hash'] !== '') {
                         $referenced[$f['object_hash']] = true;
@@ -63,13 +69,20 @@ class gc_objects extends base_command {
             }
         } else {
             if (!$apply) { $ctx->out->info('No objects directory; nothing to collect'); }
-            $ctx->out->json(['action'=>'gc.objects','dry_run'=>!$apply,'referenced'=>0,'total_objects'=>0,'orphans'=>0,'removed'=>0,'bytes_total'=>0,'bytes_reclaimable'=>0]);
+            $ctx->out->json([
+                'action'=>'gc.objects','dry_run'=>!$apply,'referenced'=>0,'total_objects'=>0,'orphans'=>0,'removed'=>0,
+                'bytes_total'=>0,'bytes_reclaimable'=>0,'manifests_scanned'=>0,'manifests_skipped'=>0,'manifests_error'=>0
+            ]);
             return 0;
         }
         usort($candidates, fn($a,$b)=>$b['size'] <=> $a['size']);
         if (!$candidates) {
             $ctx->out->info('No orphan objects found (referenced='.$referencedCount.', total='.$totalObjects.')');
-            $ctx->out->json(['action'=>'gc.objects','dry_run'=>!$apply,'referenced'=>$referencedCount,'total_objects'=>$totalObjects,'orphans'=>0,'removed'=>0,'bytes_total'=>$totalBytes,'bytes_reclaimable'=>0]);
+            $ctx->out->json([
+                'action'=>'gc.objects','dry_run'=>!$apply,'referenced'=>$referencedCount,'total_objects'=>$totalObjects,
+                'orphans'=>0,'removed'=>0,'bytes_total'=>$totalBytes,'bytes_reclaimable'=>0,
+                'manifests_scanned'=>$manifestsScanned,'manifests_skipped'=>$manifestsSkipped,'manifests_error'=>$manifestsErrored
+            ]);
             return 0;
         }
         if (!$apply) {
@@ -80,11 +93,13 @@ class gc_objects extends base_command {
             $ctx->out->json([
                 'action'=>'gc.objects','dry_run'=>true,'referenced'=>$referencedCount,'total_objects'=>$totalObjects,
                 'orphans'=>count($candidates),'candidate_hashes'=>array_map(fn($c)=>$c['hash'], $show),
-                'bytes_total'=>$totalBytes,'bytes_reclaimable'=>$reclaimBytes
+                'bytes_total'=>$totalBytes,'bytes_reclaimable'=>$reclaimBytes,
+                'manifests_scanned'=>$manifestsScanned,'manifests_skipped'=>$manifestsSkipped,'manifests_error'=>$manifestsErrored
             ]);
             return 0;
         }
         // Apply deletions
+        $ctx->out->info('Applying GC of '.count($candidates).' orphan object(s). Avoid concurrent snapshot creation during GC.');
         $removed = 0; $errors = 0; $error_hashes = [];
         foreach ($candidates as $c) {
             $ok = @unlink($c['path']);
@@ -96,9 +111,9 @@ class gc_objects extends base_command {
         $ctx->out->json([
             'action'=>'gc.objects','dry_run'=>false,'referenced'=>$referencedCount,'total_objects'=>$totalObjects,
             'orphans'=>count($candidates),'removed'=>$removed,'errors'=>$errors,'error_hashes'=>$error_hashes,
-            'bytes_total'=>$totalBytes,'bytes_reclaimed'=>$reclaimBytes
+            'bytes_total'=>$totalBytes,'bytes_reclaimable'=>$reclaimBytes,'bytes_reclaimed'=>$reclaimBytes,
+            'manifests_scanned'=>$manifestsScanned,'manifests_skipped'=>$manifestsSkipped,'manifests_error'=>$manifestsErrored
         ]);
         return $errors ? 2 : 0;
     }
 }
-
