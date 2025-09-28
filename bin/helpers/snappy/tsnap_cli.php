@@ -62,6 +62,9 @@ $router->register('prune','run', new Snappy\Cli\Commands\prune_run());
 // Verify
 $router->register('verify','run', new Snappy\Cli\Commands\verify_run());
 
+// GC
+$router->register('gc','objects', new Snappy\Cli\Commands\gc_objects());
+
 // Config
 $router->register('config','get', new Snappy\Cli\Commands\config_get());
 $router->register('config','set', new Snappy\Cli\Commands\config_set());
