@@ -38,6 +38,18 @@ class snapshot_manager {
         ];
         if ($type === 'sql') { $this->create_sql_backup($uid, $meta); }
         else { throw new ValidationException('Unknown snapshot type: ' . $type); }
+        // Build & write manifest-v2.json before legacy meta.json (dual write) per T2.2
+        try {
+            $manifest = $this->build_manifest_v2($uid, $type, $message, $meta);
+            // integrity assertion (#files match)
+            if (count($manifest['files']) !== count($meta['files'])) {
+                throw new ValidationException('Manifest v2 file count mismatch');
+            }
+            $this->write_manifest_v2($uid, $manifest);
+        } catch (Throwable $e) {
+            // Fail fast prior to writing meta.json to avoid divergent states
+            throw $e;
+        }
         $this->write_meta('local', $uid, $meta);
         return $uid;
     }
@@ -417,6 +429,68 @@ class snapshot_manager {
         if ($remote !== 'local') { throw new ValidationException('write_meta only allowed for local'); }
         $file = $this->local_snapshot_dir($uid) . '/meta.json';
         file_put_contents($file, json_encode($meta, JSON_PRETTY_PRINT));
+    }
+
+    private function build_manifest_v2(string $uid, string $type, string $message, array $meta): array {
+        $dir = $this->local_snapshot_dir($uid);
+        $files = [];
+        $total = 0;
+        foreach ($meta['files'] as $name) {
+            $path = $dir . '/' . $name;
+            $size = is_file($path) ? filesize($path) : 0;
+            $files[] = [
+                'name' => $name,
+                'size_bytes' => $size,
+                'compressed' => false,
+            ];
+            $total += $size;
+        }
+        $checksums = [
+            'algo' => 'sha256',
+            'files' => [],
+        ];
+        foreach (($meta['file_checksums'] ?? []) as $file => $hash) {
+            $checksums['files'][$file] = $hash;
+        }
+        $argv = $GLOBALS['argv'] ?? [];
+        $command_line = '';
+        if ($argv && is_array($argv)) {
+            // best-effort reproduction; avoid quoting explosion
+            $parts = [];
+            foreach ($argv as $a) { $parts[] = strpos($a, ' ') !== false ? escapeshellarg($a) : $a; }
+            $command_line = implode(' ', $parts);
+        }
+        $provenance = [
+            'command_line' => $command_line,
+            'host' => (string) (gethostname() ?: php_uname('n')),
+            'user' => (string) (get_current_user() ?: ''),
+            'php_version' => PHP_VERSION,
+        ];
+        return [
+            'schema_version' => 2,
+            'uid' => $uid,
+            'created_utc' => gmdate('Y-m-d\TH:i:s\Z'),
+            'snapshot_type' => $type,
+            'message' => $message,
+            // 'tags' => [], // optional; omitted for now
+            'files' => $files,
+            'checksums' => $checksums,
+            'size_total_bytes' => $total,
+            'compression' => [ 'enabled' => false ],
+            'provenance' => $provenance,
+        ];
+    }
+
+    private function write_manifest_v2(string $uid, array $manifest): void {
+        $dir = $this->local_snapshot_dir($uid);
+        $target = $dir . '/manifest-v2.json';
+        $tmp = sys_get_temp_dir() . '/snappy_manifest_v2_' . $uid . '_' . bin2hex(random_bytes(4)) . '.json';
+        $json = json_encode($manifest, JSON_PRETTY_PRINT);
+        if ($json === false) { throw new ValidationException('Failed to encode manifest-v2 JSON'); }
+        file_put_contents($tmp, $json);
+        // atomic rename
+        @rename($tmp, $target);
+        if (!is_file($target)) { throw new ValidationException('Failed to write manifest-v2.json'); }
     }
 
     public function local_path(string $uid): string { return $this->registry->local_base_path() . '/snaps/' . $uid; }

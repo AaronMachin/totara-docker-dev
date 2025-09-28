@@ -1,0 +1,23 @@
+{
+  "schema_version": 2,
+  "uid": "example1234",
+  "created_utc": "2025-01-01T00:00:00Z",
+  "snapshot_type": "sql",
+  "message": "Example snapshot manifest for schema validation.",
+  "files": [
+    { "name": "backup.sql", "size_bytes": 123, "compressed": false }
+  ],
+  "checksums": {
+    "algo": "sha256",
+    "files": { "backup.sql": "0000000000000000000000000000000000000000000000000000000000000000" }
+  ],
+  "size_total_bytes": 123,
+  "compression": { "enabled": false },
+  "provenance": {
+    "command_line": "snappy snap create --type=sql",
+    "host": "example-host",
+    "user": "example-user",
+    "php_version": "8.1.0"
+  }
+}
+

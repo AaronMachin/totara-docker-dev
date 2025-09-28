@@ -89,6 +89,25 @@ PHP;
         self::assertIsArray($meta);
         self::assertSame($uid, $meta['uid']);
         self::assertSame(['backup.sql'], $meta['files']);
+        // New manifest-v2 assertions
+        self::assertFileExists($snapDir . '/manifest-v2.json');
+        $m2 = json_decode(file_get_contents($snapDir . '/manifest-v2.json'), true);
+        self::assertIsArray($m2);
+        self::assertSame(2, $m2['schema_version']);
+        self::assertSame($uid, $m2['uid']);
+        self::assertSame('sql', $m2['snapshot_type']);
+        self::assertSame('backup.sql', $m2['files'][0]['name']);
+        self::assertFalse($m2['files'][0]['compressed']);
+        self::assertSame('sha256', $m2['checksums']['algo']);
+        self::assertArrayHasKey('backup.sql', $m2['checksums']['files']);
+        self::assertIsInt($m2['size_total_bytes']);
+        self::assertIsArray($m2['provenance']);
+        // Additional schema pattern/style assertions
+        self::assertMatchesRegularExpression('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/', $m2['created_utc']);
+        self::assertArrayHasKey('compression', $m2);
+        self::assertFalse($m2['compression']['enabled']);
+        $digest = $m2['checksums']['files']['backup.sql'];
+        self::assertMatchesRegularExpression('/^[a-f0-9]{64}$/', $digest);
     }
 
     public function testCreateSqlBackupFailure(): void
@@ -110,4 +129,3 @@ PHP;
         }
     }
 }
-
