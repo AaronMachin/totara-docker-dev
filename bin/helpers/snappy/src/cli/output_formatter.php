@@ -77,6 +77,7 @@ class output_formatter {
 
     public function flush(?string $command, string $status = 'ok'): void {
         if (!$this->jsonMode) { return; }
+        if ($command === null && isset($GLOBALS['__snappy_force_command'])) { $command = $GLOBALS['__snappy_force_command']; }
         $out = [
             'command' => $command,
             'status' => $status,
