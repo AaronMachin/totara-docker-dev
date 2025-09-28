@@ -14,6 +14,7 @@ use Snappy\Util\env;
 class snapshot_manager {
     private remote_registry $registry;
     private ?remote_snapshot_cache $cache = null;
+    private ?SnapshotLoader $loader = null;
 
     public function __construct(remote_registry $registry) {
         $this->registry = $registry;
@@ -128,29 +129,20 @@ class snapshot_manager {
         }
         $rows = [];
         foreach ($snapshots as $uid => $info) {
-            $meta = $this->read_meta($remote, $uid);
-            if (!$meta) {
-                continue;
-            }
-            $msg = (string) ($meta['message'] ?? '');
-            if (!$full) {
-                $msg = preg_split('/\r?\n/', $msg, 2)[0] ?? '';
-            } else {
-                $msg = preg_replace('/\r?\n+/', ' | ', $msg);
-            }
+            $manifest = $this->read_manifest($remote, $uid); // normalized (may be partial remotely)
+            if (!$manifest) { continue; }
+            $msg = (string) ($manifest['message'] ?? '');
+            if (!$full) { $msg = preg_split('/\r?\n/', $msg, 2)[0] ?? ''; } else { $msg = preg_replace('/\r?\n+/', ' | ', $msg); }
+            $created = $manifest['created'] ?? ($manifest['created_utc'] ?? $info['last_modified']);
             $rows[] = [
                 'uid' => $uid,
-                'created' => $meta['created'] ?? $info['last_modified'],
-                'type' => $meta['type'] ?? '',
+                'created' => $created,
+                'type' => $manifest['type'] ?? '',
                 'message' => $msg,
             ];
         }
-        usort($rows, function ($a, $b) {
-            return strcmp($b['created'], $a['created']);
-        });
-        if (count($rows) > $limit) {
-            $rows = array_slice($rows, 0, $limit);
-        }
+        usort($rows, function ($a, $b) { return strcmp($b['created'], $a['created']); });
+        if (count($rows) > $limit) { $rows = array_slice($rows, 0, $limit); }
         return $rows;
     }
 
@@ -231,35 +223,19 @@ class snapshot_manager {
 
     private function scan_remote_for_rows(string $remote, bool $full, int $limit): array {
         $out = [];
-        try {
-            $storage = $this->registry->storage($remote);
-            $objects = $storage->list_objects('snaps/', $limit * 20);
-        } catch (Throwable $e) {
-            return $out;
-        }
+        try { $storage = $this->registry->storage($remote); $objects = $storage->list_objects('snaps/', $limit * 20); } catch (Throwable $e) { return $out; }
         $metaKeys = [];
-        foreach ($objects as $o) {
-            $key = $o['key'];
-            if (preg_match('#^snaps/([^/]+)/meta\.json$#', $key, $m)) {
-                $uid = $m[1];
-                $metaKeys[$uid] = $key;
-            }
-        }
-        foreach ($metaKeys as $uid => $k) {
-            $meta = $this->read_meta($remote, $uid);
-            if (!$meta) {
-                continue;
-            }
-            $message = (string) ($meta['message'] ?? '');
-            if (!$full) {
-                $message = preg_split('/\r?\n/', $message, 2)[0] ?? '';
-            } else {
-                $message = preg_replace('/\r?\n+/', ' | ', $message);
-            }
+        foreach ($objects as $o) { $key = $o['key']; if (preg_match('#^snaps/([^/]+)/meta\.json$#', $key, $m)) { $metaKeys[$m[1]] = $key; } }
+        foreach ($metaKeys as $uid => $_k) {
+            $manifest = $this->read_manifest($remote, $uid);
+            if (!$manifest) { continue; }
+            $message = (string) ($manifest['message'] ?? '');
+            if (!$full) { $message = preg_split('/\r?\n/', $message, 2)[0] ?? ''; } else { $message = preg_replace('/\r?\n+/', ' | ', $message); }
+            $created = $manifest['created'] ?? ($manifest['created_utc'] ?? '');
             $out[] = [
                 'uid' => $uid,
-                'created' => $meta['created'] ?? '',
-                'type' => $meta['type'] ?? '',
+                'created' => $created,
+                'type' => $manifest['type'] ?? '',
                 'message' => $message,
                 'remote' => $remote,
             ];
@@ -494,4 +470,27 @@ class snapshot_manager {
     }
 
     public function local_path(string $uid): string { return $this->registry->local_base_path() . '/snaps/' . $uid; }
+
+    /**
+     * Read normalized manifest (prefers manifest-v2 locally, falls back to meta.json). Remote currently meta.json only.
+     */
+    public function read_manifest(string $remote, string $uid): ?array {
+        if ($remote === 'local') {
+            return $this->loader()->load_local($uid, $this->registry->local_base_path());
+        }
+        // Remote: read legacy meta.json then map minimal normalized fields needed for listing
+        $storage = $this->registry->storage($remote);
+        try { $json = $storage->read_object('snaps/' . $uid . '/meta.json'); } catch (\Throwable $e) { return null; }
+        $data = @json_decode($json, true); if (!is_array($data)) { return null; }
+        $created = $data['created'] ?? '';
+        return [
+            'uid' => $data['uid'] ?? $uid,
+            'created_utc' => $created,
+            'created' => $created,
+            'type' => $data['type'] ?? '',
+            'message' => $data['message'] ?? '',
+            'raw_version' => 1,
+        ];
+    }
+    private function loader(): SnapshotLoader { return $this->loader ??= new SnapshotLoader(); }
 }
