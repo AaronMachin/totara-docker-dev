@@ -23,7 +23,9 @@ class command_router {
         $this->lastCommand = null;
         $primary = $argv[0] ?? '';
         if ($primary === '' || $primary === 'help') {
+            // dynamic grouped help
             $this->print_root_help($ctx);
+            if ($primary === 'help') { $this->lastCommand = 'help'; }
             return $primary === 'help' ? 0 : 1;
         }
         $sub = $argv[1] ?? '';
@@ -52,21 +54,72 @@ class command_router {
     public function last_command(): ?string { return $this->lastCommand; }
 
     private function print_root_help(?context $ctx = null): void {
-        $lines = [
-            'Snappy hierarchical CLI (primary subcommand)',
-            '',
-            'Usage: tsnap <primary> <subcommand> [options]',
-            '',
-            'Primary commands:'
-        ];
-        foreach ($this->map as $p => $subs) { $lines[] = "  $p  (".implode(', ', array_keys($subs)).")"; }
-        $lines[] = ''; $lines[] = 'Examples:';
-        $lines[] = "  tsnap snapshot create -m 'initial load'";
-        $lines[] = "  tsnap snapshot list --limit=20";
-        $lines[] = "  tsnap share create <uid|prefix>";
-        $lines[] = "  tsnap config get options.snapshot_root";
-        if ($ctx) { foreach ($lines as $l) { $ctx->out->info($l); } }
-        else { echo implode("\n", $lines) . "\n"; }
+        if (!$ctx) { return; }
+        // Collect metadata from all commands
+        $metaList = [];
+        foreach ($this->map as $primary => $subs) {
+            foreach ($subs as $sub => $handler) {
+                if (method_exists($handler,'metadata')) { $m = $handler->metadata(); }
+                else {
+                    // Fallback legacy shape
+                    $m = [
+                        'name' => $primary.'.'.$sub,
+                        'group' => 'Other',
+                        'description' => $handler->description(),
+                        'usage' => trim($handler->usage()),
+                        'examples' => $handler->examples(),
+                    ];
+                }
+                // Ensure canonical name / tokens for display
+                $m['primary'] = $primary;
+                $m['sub'] = $sub;
+                $metaList[] = $m;
+            }
+        }
+        // Group by group key
+        $groups = [];
+        foreach ($metaList as $m) { $groups[$m['group'] ?? 'Other'][] = $m; }
+        // Stable ordering: Snapshot, Share, Maintenance, Config, Other, then alpha for any extras
+        $order = ['Snapshot','Share','Maintenance','Config','Other'];
+        $ordered = [];
+        foreach ($order as $g) { if (isset($groups[$g])) { $ordered[$g] = $groups[$g]; unset($groups[$g]); } }
+        ksort($groups, SORT_NATURAL | SORT_FLAG_CASE);
+        foreach ($groups as $g=>$arr) { $ordered[$g] = $arr; }
+        // Sort commands within each group by primary then sub
+        foreach ($ordered as $g => $arr) {
+            usort($arr, function($a,$b){
+                return [$a['primary'],$a['sub']] <=> [$b['primary'],$b['sub']];
+            });
+            $ordered[$g] = $arr;
+        }
+        if ($ctx->out->isJson()) {
+            $ctx->out->json(['commands'=>array_map(function($m){
+                // Remove helper fields primary/sub duplicates; keep name
+                unset($m['primary'],$m['sub']);
+                return $m;
+            }, $metaList)]);
+            return;
+        }
+        $ctx->out->info('Snappy CLI - grouped command help');
+        $ctx->out->info('');
+        $ctx->out->info('Usage: tsnap <primary> <subcommand> [options]');
+        $ctx->out->info('');
+        foreach ($ordered as $groupName => $entries) {
+            $ctx->out->info('['.$groupName.']');
+            // Compute padding for nice columns
+            $maxCmd = 0; foreach ($entries as $e) { $disp = $e['primary'].' '.$e['sub']; $maxCmd = max($maxCmd, strlen($disp)); }
+            foreach ($entries as $e) {
+                $disp = $e['primary'].' '.$e['sub'];
+                $pad = str_pad($disp, $maxCmd, ' ');
+                $ctx->out->info('  '.$pad.'  '.$e['description']);
+                $examples = $e['examples'] ?? [];
+                if ($examples) {
+                    $ctx->out->info('    eg: '.$examples[0]);
+                }
+            }
+            $ctx->out->info('');
+        }
+        $ctx->out->info('Run: tsnap <primary> <subcommand> --help for detailed usage and more examples.');
     }
 
     private function print_primary_help(string $primary, ?context $ctx = null): void {

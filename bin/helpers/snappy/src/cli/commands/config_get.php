@@ -9,6 +9,11 @@ class config_get extends base_command {
     public function description(): string { return 'Get configuration value(s)'; }
     public function usage(): string { return 'Usage: tsnap config get [path]
 If path omitted prints full resolved config JSON. Path uses dot notation.'; }
+    public function examples(): array { return [
+        'tsnap config get version',
+        'tsnap config get options.snapshot_root',
+        'tsnap config get',
+    ]; }
 
     public function run(array $args, context $ctx): int {
         $path = $args[0] ?? '';

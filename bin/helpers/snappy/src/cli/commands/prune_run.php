@@ -8,6 +8,10 @@ class prune_run extends base_command {
     public function name(): string { return 'prune.run'; }
     public function description(): string { return 'Prune local snapshots by keeping the most recent N'; }
     public function usage(): string { return 'Usage: tsnap prune run [--keep=N]\nRemoves oldest local snapshots retaining newest N (default 20).'; }
+    public function examples(): array { return [
+        'tsnap prune run --keep=50',
+        'tsnap prune run --keep=0',
+    ]; }
 
     public function run(array $args, context $ctx): int {
         $keep = 20; foreach ($args as $a) { if (preg_match('~^--keep=(\d+)~',$a,$m)) { $keep = max(0,(int)$m[1]); } }

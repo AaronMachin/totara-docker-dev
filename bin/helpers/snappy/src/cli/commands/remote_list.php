@@ -8,6 +8,9 @@ class remote_list extends base_command {
     public function name(): string { return 'remote.list'; }
     public function description(): string { return 'List configured snapshot remotes'; }
     public function usage(): string { return 'Usage: tsnap remote list'; }
+    public function examples(): array { return [
+        'tsnap remote list',
+    ]; }
 
     public function run(array $args, context $ctx): int {
         $remotes = $ctx->registry->list();

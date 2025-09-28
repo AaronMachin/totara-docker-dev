@@ -9,6 +9,10 @@ class verify_run extends base_command {
     public function name(): string { return 'verify.run'; }
     public function description(): string { return 'Verify integrity (checksums) of a local snapshot'; }
     public function usage(): string { return 'Usage: tsnap verify run <uid|prefix>'; }
+    public function examples(): array { return [
+        'tsnap verify run a1b2c3',
+        'tsnap verify run 20240101',
+    ]; }
     public function run(array $args, context $ctx): int {
         $token = $args[0] ?? '';
         if ($token === '') { $ctx->out->error('uid or unique prefix required', 1); return 1; }

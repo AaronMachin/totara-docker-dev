@@ -8,6 +8,10 @@ class snapshot_show extends base_command {
     public function name(): string { return 'snapshot.show'; }
     public function description(): string { return 'Show snapshot manifest/details'; }
     public function usage(): string { return 'Usage: tsnap snapshot show <uid|prefix> [--remote=NAME]\nDisplays snapshot details from local (default) or remote.'; }
+    public function examples(): array { return [
+        'tsnap snapshot show a1b2c3',
+        'tsnap snapshot show a1b2 --remote=prod',
+    ]; }
 
     public function run(array $args, context $ctx): int {
         $token = null; $remote = 'local';

@@ -8,6 +8,10 @@ class remote_add extends base_command {
     public function name(): string { return 'remote.add'; }
     public function description(): string { return 'Add a snapshot remote (currently supports local/s3)'; }
     public function usage(): string { return 'Usage: tsnap remote add <name> <type> [--endpoint=URL --bucket=NAME --region=REG --key=K --secret=S --path-style]'; }
+    public function examples(): array { return [
+        'tsnap remote add prod s3 --endpoint=https://s3.example.com --bucket=mybucket',
+        'tsnap remote add staging local',
+    ]; }
 
     public function run(array $args, context $ctx): int {
         $name = $args[0] ?? ''; $type = $args[1] ?? '';
@@ -29,4 +33,3 @@ class remote_add extends base_command {
         return 0;
     }
 }
-

@@ -8,6 +8,10 @@ class snapshot_list extends base_command {
     public function name(): string { return 'snapshot.list'; }
     public function description(): string { return 'List snapshots (local or remote)'; }
     public function usage(): string { return 'Usage: tsnap snapshot list [--remote=NAME] [--full] [--limit=N] [--live] [--no-index]\nLists snapshots; defaults to local.'; }
+    public function examples(): array { return [
+        'tsnap snapshot list --limit=20',
+        'tsnap snapshot list --remote=prod --full',
+    ]; }
 
     public function run(array $args, context $ctx): int {
         $opts = $this->parseArgsLocal($args);

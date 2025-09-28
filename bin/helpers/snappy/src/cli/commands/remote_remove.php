@@ -8,6 +8,9 @@ class remote_remove extends base_command {
     public function name(): string { return 'remote.remove'; }
     public function description(): string { return 'Remove a configured snapshot remote'; }
     public function usage(): string { return 'Usage: tsnap remote remove <name>'; }
+    public function examples(): array { return [
+        'tsnap remote remove prod',
+    ]; }
 
     public function run(array $args, context $ctx): int {
         $name = $args[0] ?? '';
@@ -28,4 +31,3 @@ class remote_remove extends base_command {
         return 0;
     }
 }
-
