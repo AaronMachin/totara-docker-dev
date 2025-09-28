@@ -1,0 +1,17 @@
+<?php
+namespace Snappy\Cli\Commands;
+
+use Snappy\Cli\base_command;
+use Snappy\Cli\context;
+
+class share_list extends base_command {
+    public function name(): string { return 'share.list'; }
+    public function description(): string { return 'List share artifacts (placeholder)'; }
+    public function usage(): string { return 'Usage: tsnap share list\nLists available share artifacts (not yet implemented; placeholder outputs none).'; }
+
+    public function run(array $args, context $ctx): int {
+        echo "(share listing not implemented in T5.1 scope)\n";
+        return 0;
+    }
+}
+

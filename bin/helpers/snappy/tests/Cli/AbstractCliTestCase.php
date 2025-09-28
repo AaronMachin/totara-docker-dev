@@ -30,7 +30,8 @@ abstract class AbstractCliTestCase extends TestCase
         $configFile = $cfgDir . '/config.json';
         $this->envPrefix = 'SNAPPY_CONFIG_FILE=' . escapeshellarg($configFile)
             . ' SNAPPY_SNAPSHOT_BASE=' . escapeshellarg($snapDir)
-            . ' SNAPPY_PROVISIONAL_BASE=' . escapeshellarg($provDir);
+            . ' SNAPPY_PROVISIONAL_BASE=' . escapeshellarg($provDir)
+            . ' SNAPPY_FAKE_DUMP=1';
     }
 
     protected function tearDown(): void
@@ -47,6 +48,7 @@ abstract class AbstractCliTestCase extends TestCase
     {
         $prefix = $this->envPrefix . ($extraEnv !== '' ? ' ' . trim($extraEnv) : '');
         $cmd = $prefix . ' ' . $this->phpBin . ' ' . $this->cliEntry . ' ' . $args . ' 2>&1';
+        @file_put_contents($this->tmpRoot . '/cmd.log', $cmd . "\n", FILE_APPEND);
         $lines = [];
         exec($cmd, $lines, $exitCode);
         return implode("\n", $lines);
@@ -66,4 +68,3 @@ abstract class AbstractCliTestCase extends TestCase
         @rmdir($dir);
     }
 }
-

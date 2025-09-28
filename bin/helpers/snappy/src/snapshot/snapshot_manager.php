@@ -103,7 +103,12 @@ class snapshot_manager {
             $src = $file['path'];
             if (!is_file($src)) { throw new ProcessFailedException('Dump provider missing file path ' . $src); }
             $dest = $dir . '/' . $name;
-            if (!@copy($src, $dest)) { throw new ProcessFailedException('Failed to copy dump file to snapshot directory'); }
+            if ($src !== $dest) { // normal case: provider wrote elsewhere -> copy into snapshot dir
+                if (!@copy($src, $dest)) { throw new ProcessFailedException('Failed to copy dump file to snapshot directory'); }
+            } else {
+                // provider already wrote the file directly into the snapshot work directory (e.g. FakeDumpProvider);
+                // treat as success without copy.
+            }
             $meta['files'][] = $name;
             $meta['file_checksums'][$name] = hash_file('sha256', $dest);
         }
@@ -397,6 +402,12 @@ class snapshot_manager {
             }
         }
         return count($matches) === 1 ? $matches[0] : '';
+    }
+
+    public function verify_local(string $uid): void {
+        $meta = $this->read_meta('local', $uid);
+        if (!$meta) { throw new SnapshotNotFoundException('Unknown snapshot ' . $uid); }
+        $this->verify('local', $uid, $meta);
     }
 
     public function push(string $uid, string $target_remote, string $source_remote = 'local'): int {

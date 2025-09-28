@@ -14,8 +14,9 @@ class DumpProviderResolver {
     /** @param DumpProviderInterface[] $providers */
     public function __construct(array $providers = []) {
         if (!$providers) {
-            // Default registration list (order matters: first match wins)
-            $providers = [ new TdbDumpProvider() ];
+            $fake = getenv('SNAPPY_FAKE_DUMP');
+            if ($fake !== false && $fake !== '') { $providers[] = new FakeDumpProvider(); }
+            $providers[] = new TdbDumpProvider();
         }
         $this->providers = $providers;
     }
@@ -31,4 +32,3 @@ class DumpProviderResolver {
     /** @return DumpProviderInterface[] */
     public function all(): array { return $this->providers; }
 }
-
