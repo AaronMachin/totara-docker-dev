@@ -1050,7 +1050,7 @@ Agent Execution Checklist:
 T10.3 S3 MinIO Integration Test
 -------------------------------------------------------------------
 ID: T10.3
-Title: Remote Push/Pull Integration (MinIO)
+Title: Remote Push/Pull Integration (s3)
 Project Name: Snappy (rewrite of prototype)
 Project Purpose: Snappy is a local-first developer tool to create, store, list, verify, and share database snapshots (initially SQL dumps) enriched with strong metadata and secure one-time sharing. Goals: simplicity, reliability, rich manifest metadata (Manifest v2), fast O(1) listing via indexes, optional compression, tagging & filtering, minimal retention, secure single-use sharing tokens, and maintainable modular architecture (Domain / Application / Infrastructure / CLI / Support). Backwards compatibility with the prototype is NOT required.
 Rewrite Note: Clean rewrite; breaking changes are acceptable and expected. No deprecation warnings or transitional alias layers; legacy command names will be replaced outright.

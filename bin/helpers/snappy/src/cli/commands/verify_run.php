@@ -11,11 +11,13 @@ class verify_run extends base_command {
     public function usage(): string { return 'Usage: tsnap verify run <uid|prefix>'; }
     public function run(array $args, context $ctx): int {
         $token = $args[0] ?? '';
-        if ($token === '') { fwrite(STDERR, "uid or unique prefix required\n"); return 1; }
+        if ($token === '') { $ctx->out->error('uid or unique prefix required', 1); return 1; }
         $uid = $ctx->manager->resolve_uid($token, 'local');
-        if ($uid === '') { fwrite(STDERR, "no or ambiguous match for '$token'\n"); return 3; }
+        if ($uid === '') { $ctx->out->error("no or ambiguous match for '$token'", 3); return 3; }
         try { $ctx->manager->verify_local($uid); }
-        catch (SnapshotNotFoundException $e) { fwrite(STDERR,'verify failed: '.$e->getMessage()."\n"); return 3; }
-        echo "verified $uid OK\n"; return 0;
+        catch (SnapshotNotFoundException $e) { $ctx->out->error('verify failed: '.$e->getMessage(), 3); return 3; }
+        $ctx->out->info("verified $uid OK");
+        $ctx->out->json(['action'=>'verify','uid'=>$uid,'status'=>'ok']);
+        return 0;
     }
 }

@@ -12,11 +12,12 @@ class config_set extends base_command {
     public function run(array $args, context $ctx): int {
         $persist = false; $pos = [];
         foreach ($args as $a) { if ($a==='--persist') { $persist = true; } else { $pos[] = $a; } }
-        if (count($pos) < 2) { fwrite(STDERR, "path and value required\n"); return 1; }
+        if (count($pos) < 2) { $ctx->out->error('path and value required', 1); return 1; }
         [$path,$rawVal] = [$pos[0], $pos[1]];
         $val = $this->coerce($rawVal);
         $ctx->config->set($path, $val, $persist);
-        if ($persist) { echo "updated (persisted) $path\n"; } else { echo "updated (in-memory) $path\n"; }
+        $ctx->out->info('updated '.($persist ? '(persisted) ' : '(in-memory) ').$path);
+        $ctx->out->json(['path'=>$path,'value'=>$val,'persisted'=>$persist]);
         return 0;
     }
 
@@ -30,4 +31,3 @@ class config_set extends base_command {
         return $v;
     }
 }
-

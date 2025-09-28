@@ -13,7 +13,10 @@ class color {
         if (self::$enabled === null) {
             $term = getenv('TERM') ?: '';
             $no = getenv('NO_COLOR');
-            self::$enabled = function_exists('posix_isatty') && posix_isatty(STDOUT) && !$no && $term !== '';
+            $isatty = false;
+            if (function_exists('stream_isatty')) { $isatty = @stream_isatty(STDOUT); }
+            elseif (function_exists('posix_isatty')) { $isatty = @posix_isatty(STDOUT); }
+            self::$enabled = $isatty && !$no && $term !== '';
         }
         return self::$enabled;
     }
@@ -39,4 +42,3 @@ class color {
         return self::colorize($name, $code);
     }
 }
-

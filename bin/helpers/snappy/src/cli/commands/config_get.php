@@ -13,17 +13,23 @@ If path omitted prints full resolved config JSON. Path uses dot notation.'; }
     public function run(array $args, context $ctx): int {
         $path = $args[0] ?? '';
         if ($path === '') {
-            echo json_encode($ctx->config->all(), JSON_PRETTY_PRINT)."\n";
+            $all = $ctx->config->all();
+            // Text mode pretty print; quiet suppresses.
+            if (!$ctx->out->isJson() && !$ctx->out->isQuiet()) {
+                $ctx->out->info(json_encode($all, JSON_PRETTY_PRINT));
+            }
+            $ctx->out->json(['path'=>null,'value'=>$all]);
             return 0;
         }
         $val = $ctx->config->get($path, '__MISSING__');
-        if ($val === '__MISSING__') { fwrite(STDERR, "missing: $path\n"); return 2; }
+        if ($val === '__MISSING__') { $ctx->out->error("missing: $path", 2); return 2; }
         if (is_scalar($val) || $val === null) {
-            if ($val === null) { echo "null\n"; }
-            else { echo (string)$val."\n"; }
+            if (!$ctx->out->isJson() && !$ctx->out->isQuiet()) { $ctx->out->info($val === null ? 'null' : (string)$val); }
+            $ctx->out->json(['path'=>$path,'value'=>$val]);
             return 0;
         }
-        echo json_encode($val, JSON_PRETTY_PRINT)."\n"; return 0;
+        if (!$ctx->out->isJson() && !$ctx->out->isQuiet()) { $ctx->out->info(json_encode($val, JSON_PRETTY_PRINT)); }
+        $ctx->out->json(['path'=>$path,'value'=>$val]);
+        return 0;
     }
 }
-

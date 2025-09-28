@@ -10,8 +10,8 @@ class share_list extends base_command {
     public function usage(): string { return 'Usage: tsnap share list\nLists available share artifacts (not yet implemented; placeholder outputs none).'; }
 
     public function run(array $args, context $ctx): int {
-        echo "(share listing not implemented in T5.1 scope)\n";
+        $ctx->out->info('(share listing not implemented in current scope)');
+        $ctx->out->json(['shares'=>[],'implemented'=>false]);
         return 0;
     }
 }
-

@@ -11,14 +11,15 @@ class share_create extends base_command {
     public function examples(): array { return ['tsnap share create a1b2c3']; }
 
     public function run(array $args, context $ctx): int {
-        $token = null; foreach ($args as $a) { if ($a[0] !== '-') { $token = $a; break; } }
-        if ($token === null) { fwrite(STDERR, "snapshot uid or unique prefix required\n"); return 1; }
+        $token = null; foreach ($args as $a) { if ($a !== '' && $a[0] !== '-') { $token = $a; break; } }
+        if ($token === null) { $ctx->out->error('snapshot uid or unique prefix required', 1); return 1; }
         $uid = $ctx->manager->resolve_uid($token, 'local');
-        if ($uid === '') { fwrite(STDERR, "no or ambiguous match for '$token' (local)\n"); return 3; }
-        // For T5.1 scope tests we emit a deterministic fake share token (not performing upload/tunnel)
+        if ($uid === '') { $ctx->out->error("no or ambiguous match for '$token' (local)", 3); return 3; }
         $fakeToken = base64_encode('FAKE:'.$uid.':'.time());
-        echo "Snapshot UID: $uid\nShare token: $fakeToken\nPull command (future): tsnap share pull --share=$fakeToken\n";
+        $ctx->out->info('Snapshot UID: '.$uid);
+        $ctx->out->info('Share token: '.$fakeToken);
+        $ctx->out->info('Pull command (future): tsnap share pull --share='.$fakeToken);
+        $ctx->out->json(['uid'=>$uid,'share_token'=>$fakeToken]);
         return 0;
     }
 }
-

@@ -19,31 +19,43 @@ class remote extends base_command {
             'list' => $this->doList($ctx),
             'add' => $this->doAdd($args,$ctx),
             'remove','rm' => $this->doRemove($args,$ctx),
-            default => (function() { fwrite(STDERR,"unknown remote subcommand\n"); $this->display_help(); return 1; })(),
+            default => (function() use ($ctx) { $ctx->out->error('unknown remote subcommand', 1); $this->display_help(); return 1; })(),
         };
     }
 
     private function doList(context $ctx): int {
         $remotes = $ctx->registry->list();
-        if (!$remotes) { echo "(none)\n"; return 0; }
-        $w_name=4;$w_type=4;$w_created=7;
-        foreach ($remotes as $name=>$meta){$w_name=max($w_name,strlen($name));$w_type=max($w_type,strlen($meta['type']??''));$w_created=max($w_created,strlen($meta['created']??''));}
-        printf("%-{$w_name}s  %-{$w_type}s  %-{$w_created}s  %s\n",'NAME','TYPE','CREATED','DETAILS');
-        foreach ($remotes as $name=>$meta){$type=$meta['type'];$details='';if($type==='local'){$details=$meta['path']??'';}elseif($type==='s3'){$cfg=$meta['config']??[];$details=($cfg['endpoint']??'').'/'.($cfg['bucket']??'');}printf("%-{$w_name}s  %-{$w_type}s  %-{$w_created}s  %s\n",$name,$type,$meta['created']??'',$details);} return 0;
+        if (!$remotes) { $ctx->out->info('(none)'); $ctx->out->json(['remotes'=>[]]); return 0; }
+        $headers = ['NAME','TYPE','CREATED','DETAILS'];
+        $rows = [];
+        foreach ($remotes as $name=>$meta) {
+            $type=$meta['type'];
+            $details='';
+            if($type==='local'){ $details=$meta['path']??''; }
+            elseif($type==='s3'){ $cfg=$meta['config']??[]; $details=($cfg['endpoint']??'').'/'.($cfg['bucket']??''); }
+            $rows[] = [$name,$type,$meta['created']??'',$details];
+        }
+        $ctx->out->table($headers, $rows);
+        $ctx->out->json(['remotes'=>$remotes]);
+        return 0;
     }
 
     private function doAdd(array $args, context $ctx): int {
         $name = $args[0] ?? ''; $type = $args[1] ?? '';
-        if ($name==='' || $type==='') { fwrite(STDERR,"remote add requires <name> <type>\n"); $this->display_help(); return 1; }
+        if ($name==='' || $type==='') { $ctx->out->error('remote add requires <name> <type>', 1); $this->display_help(); return 1; }
         array_shift($args); array_shift($args);
         $config=[]; foreach ($args as $arg){ if(!str_starts_with($arg,'--')) continue; if(str_starts_with($arg,'--endpoint=')) $config['endpoint']=substr($arg,11); elseif(str_starts_with($arg,'--bucket=')) $config['bucket']=substr($arg,9); elseif(str_starts_with($arg,'--region=')) $config['region']=substr($arg,9); elseif(str_starts_with($arg,'--key=')) $config['key']=substr($arg,6); elseif(str_starts_with($arg,'--secret=')) $config['secret']=substr($arg,9); elseif($arg==='--path-style') $config['path_style']=true; }
         $ctx->registry->add($name,$type,$config); // may throw mapped exception
-        echo "added remote $name ($type)\n"; return 0;
+        $ctx->out->info("added remote $name ($type)");
+        $ctx->out->json(['action'=>'add','name'=>$name,'type'=>$type,'config'=>$config]);
+        return 0;
     }
 
     private function doRemove(array $args, context $ctx): int {
-        $name = $args[0] ?? ''; if ($name===''){ fwrite(STDERR,"remote remove requires <name>\n"); return 1; }
+        $name = $args[0] ?? ''; if ($name===''){ $ctx->out->error('remote remove requires <name>', 1); return 1; }
         $ctx->registry->remove($name); // may throw mapped exception
-        echo "removed remote $name\n"; return 0;
+        $ctx->out->info("removed remote $name");
+        $ctx->out->json(['action'=>'remove','name'=>$name]);
+        return 0;
     }
 }

@@ -46,7 +46,7 @@ abstract class InProcessCliTestCase extends TestCase {
     protected function buildRouter(): command_router {
         // Fallback require for command classes if autoloader missed them (CI edge cases)
         $cmdDir = __DIR__ . '/../../src/cli/commands';
-        $needed = ['snapshot_create','snapshot_list','snapshot_show','share_create','share_list','prune_run','verify_run','config_get','config_set'];
+        $needed = ['snapshot_create','snapshot_list','snapshot_show','share_create','share_list','prune_run','verify_run','config_get','config_set','remote_list','remote_add','remote_remove'];
         foreach ($needed as $n) {
             $fq = 'Snappy\\Cli\\Commands\\' . $n;
             if (!class_exists($fq)) {
@@ -64,6 +64,10 @@ abstract class InProcessCliTestCase extends TestCase {
         $router->register('verify','run',   new Snappy\Cli\Commands\verify_run());
         $router->register('config','get',   new Snappy\Cli\Commands\config_get());
         $router->register('config','set',   new Snappy\Cli\Commands\config_set());
+        // remote commands
+        $router->register('remote','list',  new Snappy\Cli\Commands\remote_list());
+        $router->register('remote','add',   new Snappy\Cli\Commands\remote_add());
+        $router->register('remote','remove',new Snappy\Cli\Commands\remote_remove());
         return $router;
     }
 

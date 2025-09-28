@@ -19,6 +19,8 @@ use Snappy\Config\config_manager;
 use Snappy\Snapshot\index_manager;
 use Snappy\Snapshot\remote_index_manager;
 use Snappy\Cli\command_router;
+use Snappy\Cli\output_formatter;
+use Snappy\Util\color;
 
 // Build core context (same as previous version)
 $home = getenv('HOME') ?: '~';
@@ -35,7 +37,6 @@ $manager = new snapshot_manager($remoteRegistry);
 $cache = new remote_snapshot_cache($snapshotBase); $manager->set_cache($cache);
 $index = new index_manager($snapshotBase); $manager->set_index($index);
 $remoteIndex = new remote_index_manager($remoteRegistry); $manager->set_remote_index($remoteIndex);
-$ctx = new context($config, $remoteRegistry, $manager, $cache, $index, $remoteIndex);
 
 // Instantiate router and register hierarchical commands
 $router = new command_router();
@@ -48,6 +49,10 @@ $router->register('snapshot','show',   new Snappy\Cli\Commands\snapshot_show());
 // Share commands
 $router->register('share','create', new Snappy\Cli\Commands\share_create());
 $router->register('share','list',   new Snappy\Cli\Commands\share_list());
+// Remote commands (separate handlers per action)
+$router->register('remote','list',    new Snappy\Cli\Commands\remote_list());
+$router->register('remote','add',     new Snappy\Cli\Commands\remote_add());
+$router->register('remote','remove',  new Snappy\Cli\Commands\remote_remove());
 
 // Prune
 $router->register('prune','run', new Snappy\Cli\Commands\prune_run());
@@ -65,16 +70,34 @@ if (getenv('SNAPPY_DEBUG_CLI')) { file_put_contents('/tmp/snappy_cli_debug.log',
 // Shift script name
 array_shift($argv);
 
+// Parse global flags early (--json, --quiet, --no-color)
+$jsonMode = false; $quiet = false; $noColor = false; $filtered = [];
+foreach ($argv as $a) {
+    if ($a === '--json') { $jsonMode = true; continue; }
+    if ($a === '--quiet') { $quiet = true; continue; }
+    if ($a === '--no-color') { $noColor = true; continue; }
+    $filtered[] = $a;
+}
+$argv = $filtered;
+if ($noColor) { color::disable(); }
+
+$out = new output_formatter($jsonMode, $quiet);
+$ctx = new context($config, $remoteRegistry, $manager, $cache, $index, $remoteIndex, $out);
+
 if (getenv('SNAPPY_DEBUG_CLI')) { fwrite(STDERR, "[snappy-cli] boot\n"); }
 try {
     $exit = $router->route($argv, $ctx);
+    $status = $exit === 0 ? 'ok' : 'error';
+    $out->flush(method_exists($router,'last_command') ? $router->last_command() : null, $status);
     if (getenv('SNAPPY_DEBUG_CLI')) { fwrite(STDERR, "[snappy-cli] exit=$exit\n"); }
 } catch (\Snappy\Support\Exception\SnappyException $e) {
     $code = \Snappy\Support\Exception\ExitCodes::codeFor($e);
+    if ($jsonMode) { $out->error($e->getMessage(), $code); $out->flush(method_exists($router,'last_command') ? $router->last_command() : null, 'error'); exit($code); }
     fwrite(STDERR, 'ERROR(' . $code . '): ' . $e->getMessage() . "\n");
     exit($code);
 } catch (\Throwable $e) {
     $code = \Snappy\Support\Exception\ExitCodes::UNKNOWN;
+    if ($jsonMode) { $out->error($e->getMessage(), $code); $out->flush(method_exists($router,'last_command') ? $router->last_command() : null, 'error'); exit($code); }
     fwrite(STDERR, 'ERROR(' . $code . '): ' . $e->getMessage() . "\n");
     exit($code);
 }

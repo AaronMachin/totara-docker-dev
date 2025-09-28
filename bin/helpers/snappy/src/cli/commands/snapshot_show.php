@@ -15,33 +15,31 @@ class snapshot_show extends base_command {
             if (str_starts_with($a,'--remote=')) { $remote = substr($a,9); }
             elseif ($token === null && !str_starts_with($a,'--')) { $token = $a; }
         }
-        if (!$token) { fwrite(STDERR, "uid or unique prefix required\n"); return 1; }
-        if (!$ctx->registry->has($remote)) { fwrite(STDERR, "unknown remote: $remote\n"); return 2; }
+        if (!$token) { $ctx->out->error('uid or unique prefix required', 1); return 1; }
+        if (!$ctx->registry->has($remote)) { $ctx->out->error("unknown remote: $remote", 2); return 2; }
         $uid = $ctx->manager->resolve_uid($token, $remote);
-        if ($uid === '') { fwrite(STDERR, "no or ambiguous match for '$token' in $remote\n"); return 3; }
+        if ($uid === '') { $ctx->out->error("no or ambiguous match for '$token' in $remote", 3); return 3; }
         $manifest = $ctx->manager->read_manifest($remote, $uid);
-        if (!$manifest) { fwrite(STDERR, "manifest not found for $uid ($remote)\n"); return 4; }
-        echo "UID:        {$manifest['uid']}\n";
-        echo "REMOTE:     $remote\n";
-        $created = $manifest['created'] ?? ($manifest['created_utc'] ?? '');
-        echo "CREATED:    $created\n";
-        $type = $manifest['snapshot_type'] ?? ($manifest['type'] ?? '');
-        echo "TYPE:       $type\n";
-        $msg = (string)($manifest['message'] ?? '');
-        echo "MESSAGE:\n$msg\n";
+        if (!$manifest) { $ctx->out->error("manifest not found for $uid ($remote)", 4); return 4; }
+        // Text mode lines
+        $lines = [
+            'UID:        '.($manifest['uid'] ?? $uid),
+            'REMOTE:     '.$remote,
+            'CREATED:    '.($manifest['created'] ?? ($manifest['created_utc'] ?? '')),
+            'TYPE:       '.($manifest['snapshot_type'] ?? ($manifest['type'] ?? '')),
+            'MESSAGE:',
+            (string)($manifest['message'] ?? ''),
+        ];
         $files = $manifest['files'] ?? [];
-        if ($files) {
-            echo "FILES (".count($files)."):\n";
-            foreach ($files as $f) {
-                if (is_array($f)) {
-                    $name = $f['name'] ?? '?'; $size = $f['size_bytes'] ?? 0; $comp = !empty($f['compressed']) ? ' [compressed]' : '';
-                    echo "  $name ($size bytes)$comp\n";
-                } else {
-                    echo "  $f\n";
-                }
-            }
+        if ($files) { $lines[] = 'FILES ('.count($files).'):'; }
+        foreach ($files as $f) {
+            if (is_array($f)) {
+                $name = $f['name'] ?? '?'; $size = $f['size_bytes'] ?? 0; $comp = !empty($f['compressed']) ? ' [compressed]' : '';
+                $lines[] = "  $name ($size bytes)$comp";
+            } else { $lines[] = '  '.$f; }
         }
+        foreach ($lines as $l) { $ctx->out->info($l); }
+        $ctx->out->json(['remote'=>$remote,'manifest'=>$manifest]);
         return 0;
     }
 }
-

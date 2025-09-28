@@ -25,11 +25,13 @@ class snapshot_create extends base_command {
         if ($message==='') {
             $tpl = "\n\n# Enter snapshot message (lines starting with # ignored)\n# Abort with empty message.\n";
             $message = editor::acquire($tpl);
-            if ($message==='') { fwrite(STDERR,"snapshot message required\n"); return 4; }
+            if ($message==='') { $ctx->out->error('snapshot message required', 4); return 4; }
         }
         try { $uid = $ctx->manager->create($type,$message,'local',$compress,$keepFailed); }
         catch (ValidationException $ve) { throw $ve; }
-        catch (Throwable $e) { fwrite(STDERR,'create failed: '.$e->getMessage()."\n"); return 1; }
-        echo "created snapshot $uid\n"; return 0;
+        catch (Throwable $e) { $ctx->out->error('create failed: '.$e->getMessage(), 1); return 1; }
+        $ctx->out->info("created snapshot $uid");
+        $ctx->out->json(['uid'=>$uid,'type'=>$type,'compressed'=>$compress,'keep_failed'=>$keepFailed]);
+        return 0;
     }
 }

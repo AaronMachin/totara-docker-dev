@@ -14,15 +14,17 @@ class prune_run extends base_command {
         $rows = $ctx->manager->list('local', false, 100000, true); // bypass index to get all
         usort($rows, fn($a,$b)=>strcmp($b['created'],$a['created']));
         $count = count($rows);
-        if ($count <= $keep) { echo "Nothing to prune (have $count, keep=$keep)\n"; return 0; }
+        if ($count <= $keep) { $ctx->out->info("Nothing to prune (have $count, keep=$keep)"); $ctx->out->json(['action'=>'prune','total_before'=>$count,'kept'=>$count,'deleted'=>0,'requested_keep'=>$keep,'errors'=>0]); return 0; }
         $toDelete = array_slice($rows, $keep);
         $base = $ctx->registry->local_base_path();
-        $deleted = 0; $errors = 0;
+        $deleted = 0; $errors = 0; $error_uids = [];
         foreach ($toDelete as $r) {
             $dir = $base.'/snaps/'.$r['uid'];
-            if (is_dir($dir)) { $this->recursiveDelete($dir) ? $deleted++ : $errors++; }
+            if (is_dir($dir)) { if ($this->recursiveDelete($dir)) { $deleted++; } else { $errors++; $error_uids[] = $r['uid']; } }
         }
-        echo "Pruned $deleted snapshot(s); kept $keep.".($errors?" ($errors errors)":"")."\n";
+        $msg = "Pruned $deleted snapshot(s); kept $keep.".($errors?" ($errors errors)":"");
+        $ctx->out->info($msg);
+        $ctx->out->json(['action'=>'prune','total_before'=>$count,'kept'=>$keep,'deleted'=>$deleted,'requested_keep'=>$keep,'errors'=>$errors,'error_uids'=>$error_uids]);
         return $errors ? 2 : 0;
     }
 
@@ -30,4 +32,3 @@ class prune_run extends base_command {
         $items = @scandir($dir); if(!$items) return false; foreach($items as $it){ if($it==='.'||$it==='..') continue; $p = $dir.'/'.$it; if(is_dir($p)) $this->recursiveDelete($p); else @unlink($p);} return @rmdir($dir);
     }
 }
-
