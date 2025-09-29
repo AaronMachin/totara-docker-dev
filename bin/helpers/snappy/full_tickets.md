@@ -1,1424 +1,511 @@
-
 GitHub Copilot
+Give this to the next agent:
 Give this to the next agent:
 You are an autonomous senior PHP CLI tooling engineer working on the Snappy rewrite (plain PHP >=8.1, no frameworks). Core expectations:
 Always gather context before changing code. List or read files relevant to the ticket (commands, snapshot, share, tests).
 Implement exactly the ticket scope (no scope creep) using minimal, clear PHP.
 For new features:
-Create or extend classes under src/ preserving existing structure. unless the ticket specifies otherwise.
-Keep share/snapshot logic cohesive (no leakage into unrelated layers).
+Create or extend classes under src/ preserving existing structure unless the ticket specifies otherwise.
+Keep share/snapshot/remote logic cohesive (no leakage into unrelated layers).
 Use atomic file writes (temp + rename) for persistence JSON.
-Never store secrets/raw tokens—store hashes only.
+Never store secrets/raw tokens—store hashes only (credentials for remotes stored in config with least necessary fields; do not log secrets).
 Update or add PHPUnit tests (tests/ directory) covering success + failure + edge cases.
 Before every commit: run the full PHPUnit suite; only commit when green.
-Use these operational steps for each ticket: a. Restate ticket (objective, scope in/out, acceptance). b. Identify target files. c. Read them. d. Plan minimal changes (bullet list). e. Apply edits (small, isolated). f. Run tests (full). g. If failing: fix iteratively. h. Commit with conventional message: <ticket> feat|fix(scope): summary. </ticket>
+Use these operational steps for each ticket: a. Restate ticket (objective, scope in/out, acceptance). b. Identify target files. c. Read them. d. Plan minimal changes (bullet list). e. Apply edits (small, isolated). f. Run tests (full). g. If failing: fix iteratively. h. Commit with conventional message: <ticket> feat|fix(scope): summary.
 Keep implementations dependency‑light (no new composer deps unless essential).
 Prefer streaming and O(1) listing/index approaches already established.
 Follow existing naming patterns (lowercase command classes retained; ignore style warnings unless functionally relevant).
 Output format rules:
 When adding CLI commands: name(), description(), usage(), examples().
 JSON output via output_formatter with only necessary fields.
-Error handling: return non-zero exit codes; use existing patterns; never expose raw tokens.
-Do not add encryption, remote upload, or retention beyond explicit ticket scope.
+Error handling: return non-zero exit codes; use existing patterns; never expose raw secrets.
+Do not add encryption, manifest signing, or retention policies beyond explicit ticket scope.
 After implementation, summarize what changed: files touched, new tests, test counts.
 Be concise—no verbose explanations unless ambiguity exists.
 Behavioral style: decisive, surgical, minimal commentary, always test-first (or test-immediately-after), self-validating, commits only after green suite.
-If a ticket asks for follow-up (e.g., fetch after create), chain tasks but isolate each commit per ticket ID.
-If unsure about a detail: infer from existing conventions (share_registry, snapshot_manager, index_manager) rather than asking. Only ask if truly blocking.
+If a ticket asks for follow-up, isolate each commit per ticket ID.
+If unsure about a detail: infer from existing conventions (snapshot_manager, index_manager) rather than asking. Only ask if truly blocking.
 Always produce value each response (plan, diff, test run, or commit).
-Always double check your work, both in running tests AND in thinking it through, and reassessing what has been done at the end of your task BEFORE committing.
+Always double check your work, both in running tests AND in thinking it through before committing.
 End of handover prompt.
-
-Full Ticket Specifications
-==========================
 
 Ticket Format Legend
 --------------------
 Each ticket below is self-contained and copy/paste ready. Fields included: ID, Title, Project Name, Project Purpose, Rewrite Note, Global Constraints, Context Recap, Objective, Rationale, Dependencies, Preconditions, Scope (In), Scope (Out), Implementation Steps, Data Structures / Schemas, File Targets (Create/Modify), Testing & Validation, Acceptance Criteria, Edge Cases, Rollback Strategy, Risks & Mitigations, Follow-Up Tasks, Time Estimate, Deliverables, Agent Execution Checklist.
 
--------------------------------------------------------------------
-T0.1 Baseline Tag & Inventory
--------------------------------------------------------------------
-ID: T0.1
-Title: Baseline Tag & Inventory
-Project Name: Snappy (rewrite of prototype)
-Project Purpose: Snappy is a local-first developer tool to create, store, list, verify, and share database snapshots (initially SQL dumps) enriched with strong metadata and secure one-time sharing. Goals: simplicity, reliability, rich manifest metadata (Manifest v2), fast O(1) listing via indexes, optional compression, tagging & filtering, minimal retention, secure single-use sharing tokens, and maintainable modular architecture (Domain / Application / Infrastructure / CLI / Support). Backwards compatibility with the prototype is NOT required.
-Rewrite Note: Clean rewrite; breaking changes are acceptable and expected. No deprecation warnings or transitional alias layers; legacy command names will be replaced outright.
-Global Constraints: Plain PHP (>=8.1) with optional Composer. Avoid unnecessary complexity. Security focus ONLY on integrity and confidentiality of shared / one-time export artifacts (not local storage hardening). Policies beyond simple retention deferred.
-Context Recap: Current code is pre-refactor. Need a frozen reference state to compare subsequent changes.
-Objective: Capture the current CLI behavior, structure, and a representative snapshot; tag repository baseline_pre_refactor.
-Rationale: Enables regression comparison and rollback clarity after structural modifications.
+NOTE ABOUT LEGACY PLAN
+----------------------
+Previous T13* tickets (snapx artifact, verify/doctor commands, legacy remote removal) are superseded. This T14* plan changes: artifact now plain deterministic tar.gz (<uid>.tar.gz) instead of .snapx; verify & doctor commands removed; ephemeral sharing reintroduced via encoded command but still no centralized service; lightweight "remotes" concept added (S3-compatible bucket listings + configuration) to future‑proof catalog integration. All tickets repeat full context—no external global reference.
+
+UNIVERSAL CONTEXT (REPEATED IN EVERY TICKET BELOW)
+--------------------------------------------------
+Project Name: Snappy
+Project Purpose: Local-first developer tool for database snapshot lifecycle: create → export portable artifact (.tar.gz) → import → optional restore → share peer-to-peer → list remote catalogs (read-only). Emphasis: determinism, integrity (sha256), streaming, minimal dependencies, clear extensibility.
+Artifact Spec (T14 baseline):
+ - File name: <uid>.tar.gz (gzip-compressed tar). If --no-compress specified (future), plain .tar accepted but default always .tar.gz.
+ - Deterministic entry order inside archive:
+   1. manifest-v2.json
+   2. export.json (NOT part of artifact hash)
+   3. files/<payload files...> (lexicographically sorted relative paths)
+ - manifest-v2.json: schema_version=2 (frozen), includes: uid, created_utc, snapshot_type ("sql"), message, files[] (name,size_bytes,compressed? bool), checksums {algo:"sha256", files:{name:sha256}}, size_total_bytes, optional compression block.
+ - export.json (schema_version=1) fields: { schema_version:1, source_uid, created_utc, manifest_sha256, files:[{path,size_bytes,sha256}], artifact_lines_sha256? (named artifact_sha256 in UI), artifact_sha256 } (single artifact_sha256 field used externally; internal variable names may differ). Keep only artifact_sha256 public.
+Hashing Algorithm Definition:
+ - manifest_sha256 = sha256(canonical_json(manifest-v2.json)) where canonical_json = recursively sort object keys; arrays kept order; UTF-8 LF; no trailing spaces.
+ - Build artifact hash lines (each terminated by single LF, no trailing blank line):
+   MANIFEST manifest-v2.json <manifest_sha256> <size_bytes>\n
+   FILE <relative_path> <file_sha256> <size_bytes>\n (one per sorted payload file)
+ - artifact_sha256 = sha256(concatenated_lines_above)
+ - export.json written AFTER computing artifact_sha256.
+Import Behavior:
+ - Validate manifest SHA and artifact SHA; recompute file hashes streaming.
+ - uid-strategy keep|new. If new: only uid in manifest modified; export.json unchanged; write import_provenance.json capturing original uid + hashes.
+Sharing (Ephemeral):
+ - share create <uid> => ensures export exists, spins ephemeral HTTP server (only /health and /<artifact>.tar.gz), prints encoded command: tsnap share import <ENCODED>.
+ - share import <ENCODED> => decode payload, download tar.gz (stream), verify sha256, import using ImportService (default uid-strategy=new), write share_provenance.json.
+Encoded Payload v=1 Fields: {v:1, h:host, p:port, fn:artifact filename, s:artifact sha256, code:short base32 of first 20 bytes of sha256 grouped 4-4-4-4-4, uid:original uid}. Base64URL no padding.
+Remotes Concept (Minimal Baseline):
+ - Allow configuring named S3-compatible remotes (stored in config.json under remotes:{name:{endpoint,bucket,region,key,secret,path_style?}}). Keys/secrets stored but never logged; redact in outputs.
+ - Commands: remote add, remote remove, remote list (list configured remotes), snapshot list --remote=<name> (lists snapshots by scanning bucket prefix snaps/<uid>/manifest-v2.json OR meta.json fallback if manifest absent). No push/pull yet.
+ - Remote listing integrity is best-effort; just parse manifest-v2.json or meta.json for uid, created, message, size.
+Global Constraints:
+ - PHP >=8.1, no new composer dependencies.
+ - Streaming I/O (64KB chunks typical); constant memory relative to payload size.
+ - IntegrityService as sole hashing path.
+ - No verify/doctor commands (functionality subsumed into import/export deterministic checks and share verification).
+ - Minimal CLI surface: snapshot (create|list|export|import|restore), share (create|import), remote (add|list|remove), metrics, gc.
+ - Atomic file writes (temp then rename) for all JSON persistence.
+ - Consistent JSON output via existing output_formatter.
+ - Non-zero exit codes on validation errors; exit code 64 for usage errors.
+ - Testing: add/modify PHPUnit tests for new behavior; ensure green suite each ticket.
+ - Security: never log remote secrets or share payload raw secret fields (none yet). Redact key/secret in remote list output.
+ - Simplicity over flexibility—avoid premature abstractions.
+
+====================================================================================================================
+T14A Codebase Trim & Baseline (Remove Legacy, Align with tar.gz, Introduce Remote Skeleton Only Config)
+====================================================================================================================
+ID: T14A
+Title: Codebase Trim & Baseline (Remove legacy share/verify/doctor, adjust for tar.gz, keep remote skeleton)
+Development Context Prompt (repeat for this ticket):
+You are an autonomous senior PHP CLI tooling engineer. Before coding: restate objective, list affected files, read them, plan minimal diff, implement, run full tests, iterate until green, commit with message pattern "T14A feat(core): ...". Enforce streaming, no new deps, atomic writes, redact secrets, no scope creep.
+Project Name: Snappy
+Project Purpose: (See Universal Context) Provide deterministic snapshot lifecycle with minimal surface; prepare for new remote + share features.
+Rewrite Note: Replaces legacy T13A approach; removes doctor & verify commands entirely; converts artifact terminology from .snapx to .tar.gz throughout docs & help; retains minimal S3 storage class only if needed for remote list.
+Context Recap: Current repo contains legacy remote/share/tunnel code, s3_storage, verify & doctor commands, tag & object hash store features, push/pull flows. New direction wants only remote configuration + listing (read-only) while removing complex legacy remote stack, plus dropping verify/doctor commands in favor of deterministic export/import.
+Objective: Produce a lean baseline: only snapshot*, share (placeholder commands not yet implemented), remote add/list/remove (stubs), metrics, gc. All references to .snapx, verify, doctor purged. Provide docs describing new artifact spec (.tar.gz) & remote concept.
+Rationale: Shrinks cognitive load; clarifies new direction; prevents drift when implementing IntegrityService & exporter.
 Dependencies: None.
-Preconditions: Git repository clean (no uncommitted changes). CLI runnable.
-Scope (In): Collect help outputs, tree, sample meta, tag creation.
-Scope (Out): Any modifications to runtime logic.
+Preconditions: Test suite runs (can be red initially for removed tests) but will be restored green after removal.
+Scope (In):
+ - Delete: verify_run.php, doctor_run.php and related tests.
+ - Delete legacy share code (old share_registry) and hosting/* (ngrok etc.).
+ - Remove snapshot hash store (objects/), tag commands, multi-remote listing & pcntl logic, push/pull commands, remote_index_manager, remote_snapshot_cache.
+ - Rename artifact references in README/docs from .snapx to .tar.gz.
+ - Introduce remote command group with add/list/remove stubs (no network calls yet) storing config under config.json (remotes section).
+ - Ensure s3_storage.php retained minimally (strip unused methods if necessary) or create minimal remote_s3_client.php if simpler.
+ - Update command_router help ordering: Snapshot, Share, Remote, Maintenance (metrics,gc), Config (if still present), Other.
+ - Add docs/artifact_spec.md and docs/remotes.md (purpose, configuration, no push/pull yet).
+ - Add docs/deferred.md enumerating removed legacy capabilities.
+Scope (Out): Export/import/share implementation details (later tickets), IntegrityService (later), remote listing logic (later T14F/T14E if needed).
 Implementation Steps:
- 1. Ensure working tree clean (abort if dirty; instruct to commit/stash).
- 2. Create docs/baseline/ directory (mkdir -p).
- 3. Dump global help: php bin/helpers/snappy/tsnap_cli.php help > docs/baseline/help_all.txt.
- 4. Dump per-command help: snap, push, pull, list, remote, cat, get, fetch, share (if exists), help -> individual txt files.
- 5. Produce directory tree of bin/helpers/snappy/src (depth 5) into docs/baseline/tree.txt.
- 6. Attempt to create an actual snapshot; if DB tooling unavailable fabricate sample_meta.json with current format fields.
- 7. Copy current README.md to docs/baseline/README.pre_refactor.md.
- 8. Git add + commit with message "Baseline capture for refactor".
- 9. Git tag -a baseline_pre_refactor -m "Baseline before refactor (timestamp)".
-Data Structures / Schemas: sample_meta.json uses existing meta.json structure {uid, created, type, message, files, file_checksums}.
-File Targets: docs/baseline/* (new files only).
-Testing & Validation: Confirm each help file non-empty; ensure tag listed (git tag --list baseline_pre_refactor).
-Acceptance Criteria: Tag exists; baseline files complete; no code logic changed.
-Edge Cases: Missing DB tool -> fabricate sample_meta.json with note field reason.
-Rollback Strategy: Delete docs/baseline and remove tag (git tag -d baseline_pre_refactor) then redo.
-Risks & Mitigations: Minimal risk; ensure clean working tree to avoid merging baseline noise later.
-Follow-Up Tasks: Reference baseline for performance or functional comparisons.
-Time Estimate: XS.
-Deliverables: docs/baseline directory + annotated tag.
-Agent Execution Checklist:
- - [ ] Verify clean git state
- - [ ] Create docs/baseline
- - [ ] Capture help outputs
- - [ ] Generate tree.txt
- - [ ] Create sample_meta.json (real or fabricated)
- - [ ] Copy README
- - [ ] Commit & tag
-
--------------------------------------------------------------------
-T1.1 Introduce Composer & PSR-4
--------------------------------------------------------------------
-ID: T1.1
-Title: Introduce Composer & PSR-4 Autoloading
-Project Name: Snappy (rewrite of prototype)
-Project Purpose: Snappy is a local-first developer tool to create, store, list, verify, and share database snapshots (initially SQL dumps) enriched with strong metadata and secure one-time sharing. Goals: simplicity, reliability, rich manifest metadata (Manifest v2), fast O(1) listing via indexes, optional compression, tagging & filtering, minimal retention, secure single-use sharing tokens, and maintainable modular architecture (Domain / Application / Infrastructure / CLI / Support). Backwards compatibility with the prototype is NOT required.
-Rewrite Note: Clean rewrite; breaking changes are acceptable and expected. No deprecation warnings or transitional alias layers; legacy command names will be replaced outright.
-Global Constraints: Plain PHP (>=8.1) with optional Composer. Avoid unnecessary complexity. Security focus ONLY on integrity and confidentiality of shared / one-time export artifacts (not local storage hardening). Policies beyond simple retention deferred.
-Context Recap: Custom autoload (snappy_autoload.php) currently used; need modern dependency and autoload infrastructure.
-Objective: Add composer.json with PSR-4 mapping (Snappy\\ => src/), integrate into CLI bootstrap.
-Rationale: Standardization, easier integration of future libraries (e.g., phpunit), cleaner class discovery.
-Dependencies: Optional: T0.1 baseline capture recommended first.
-Preconditions: PHP 8.1+, Composer available (if not, document fallback).
-Scope (In): composer.json creation, CLI bootstrap modification to prefer Composer autoload if available.
-Scope (Out): Refactoring namespaces or directory structure (separate ticket).
-Implementation Steps:
- 1. In snappy root, create composer.json with fields: name, type, minimum-stability stable, require php>=8.1, autoload psr-4 Snappy\\ src/.
- 2. Run composer install (if environment supports) to generate vendor/autoload.php (not mandatory for commit if vendor ignored; ensure .gitignore includes /vendor/).
- 3. Modify tsnap_cli.php: if vendor/autoload.php exists include it first; else fallback to snappy_autoload.php.
- 4. Add composer.lock to repo (optional decision; if added, commit it).
- 5. Verify running php tsnap_cli.php help still functions.
-Data Structures: composer.json standard schema.
-File Targets: composer.json (new), tsnap_cli.php (modify), .gitignore (ensure vendor/ entry).
-Testing & Validation: Execute help command; confirm no class-not-found errors.
-Acceptance Criteria: Autoloader available; CLI unaffected; vendor dir ignored by git.
-Edge Cases: Composer missing—document manual requirement in README later.
-Rollback Strategy: Remove composer.json, any vendor references, revert tsnap_cli.php changes.
-Risks & Mitigations: Path detection issues—guard conditional require.
-Follow-Up Tasks: Exception hierarchy (T1.3), test framework (T10.*).
+ 1. Inventory removal targets; record in docs/refactor_notes.md (pre/post LOC).
+ 2. Remove files & tests; adjust autoload if necessary.
+ 3. Add remote command stubs + config editing (safe rewrite of config_manager if needed).
+ 4. Update README + new docs.
+ 5. Run phpunit; remove/adjust failing tests due to removed commands.
+ 6. Commit.
+Data Structures / Schemas: config.json addition: remotes: { <name>: {endpoint,bucket,region,key,secret,path_style?:bool} }.
+File Targets: src/cli/commands/* (remove/add), src/remote/* (if created), config_manager.php (modify), docs/*.md, README.md.
+Testing & Validation: phpunit green; tsnap help shows updated minimal commands; remote add/list/remove round trip persists config.
+Acceptance Criteria:
+ - No references to verify/doctor/.snapx remain.
+ - remote add/list/remove functional (list redacts key/secret).
+ - docs updated & artifact spec file present.
+ - refactor_notes.md lists removed files & LOC delta.
+Edge Cases: Adding remote with existing name -> error; removing unknown remote -> error.
+Rollback Strategy: Revert commit.
+Risks & Mitigations: Accidental removal of code needed by snapshot creation -> run snapshot create test after removal.
+Follow-Up Tasks: T14B manifest freeze.
 Time Estimate: S.
-Deliverables: composer.json, updated tsnap_cli.php.
+Deliverables: Lean baseline code.
 Agent Execution Checklist:
- - [ ] Create composer.json
- - [ ] Update .gitignore
- - [ ] Modify tsnap_cli.php bootstrap
- - [ ] Validate CLI commands
- - [ ] Commit changes
+ - [ ] Remove legacy files/tests
+ - [ ] Add remote command stubs
+ - [ ] Update docs & README
+ - [ ] Adjust config schema
+ - [ ] Run tests & commit (T14A feat(core): trim & baseline)
 
--------------------------------------------------------------------
-T1.3 Unified Error & Exception Hierarchy
--------------------------------------------------------------------
-ID: T1.3
-Title: Implement Exception Hierarchy & Exit Codes
-Project Name: Snappy (rewrite of prototype)
-Project Purpose: Snappy is a local-first developer tool to create, store, list, verify, and share database snapshots (initially SQL dumps) enriched with strong metadata and secure one-time sharing. Goals: simplicity, reliability, rich manifest metadata (Manifest v2), fast O(1) listing via indexes, optional compression, tagging & filtering, minimal retention, secure single-use sharing tokens, and maintainable modular architecture (Domain / Application / Infrastructure / CLI / Support). Backwards compatibility with the prototype is NOT required.
-Rewrite Note: Clean rewrite; breaking changes are acceptable and expected. No deprecation warnings or transitional alias layers; legacy command names will be replaced outright.
-Global Constraints: Plain PHP (>=8.1) with optional Composer. Avoid unnecessary complexity. Security focus ONLY on integrity and confidentiality of shared / one-time export artifacts (not local storage hardening). Policies beyond simple retention deferred.
-Context Recap: Mixed RuntimeException usage provides inconsistent error semantics.
-Objective: Introduce SnappyException base + domain-specific subclasses mapped to documented exit codes.
-Rationale: Predictable scripting integration & structured JSON output later.
-Dependencies: T1.1 (autoload in place ensures consistent loading).
-Preconditions: Autoload working.
-Scope (In): New exceptions, central catch in CLI entry, docs/exit-codes.md.
-Scope (Out): JSON output (handled later in T5.2), retry logic.
-Implementation Steps:
- 1. Create Support/Exception/ directory.
- 2. Define base Snappy\Support\Exception\SnappyException extends Exception.
- 3. Add: SnapshotNotFoundException, RemoteException, ValidationException, ProcessFailedException, ConfigException.
- 4. Define Support/Exception/ExitCodes.php returning associative map: class => int.
- 5. Update key throw sites replacing RuntimeException with specific exceptions.
- 6. Modify CLI dispatcher: wrap execution in try/catch; map exception class to exit code; print formatted "ERROR(code): message" to STDERR.
- 7. Create docs/exit-codes.md explaining codes.
-Data Structures: Exit codes map e.g., Validation=2, NotFound=3, Remote=4, Process=5, Config=6, Unknown=99.
-File Targets: New exception files, tsnap_cli.php modifications, docs/exit-codes.md.
-Testing & Validation: Force errors (non-existent snapshot pull) and verify exit code & message.
-Acceptance Criteria: Distinct exit codes; messages uniform; documentation present.
-Edge Cases: Unmapped subclass falls back to Unknown 99.
-Rollback Strategy: Revert modifications & remove exception files.
-Risks & Mitigations: Missed conversion—leave TODO markers for remaining generic RuntimeException instances.
-Follow-Up Tasks: JSON formatting (T5.2) will leverage hierarchy.
-Time Estimate: S.
-Deliverables: Exception classes, updated dispatcher, docs.
-Agent Execution Checklist:
- - [ ] Add exception classes
- - [ ] Implement exit code map
- - [ ] Refactor throws
- - [ ] Update dispatcher
- - [ ] Add docs
- - [ ] Validate with test cases
- - [ ] Commit
-
--------------------------------------------------------------------
-T1.4 Central Process Wrapper
--------------------------------------------------------------------
-ID: T1.4
-Title: Add ProcessRunner abstraction
-Project Name: Snappy (rewrite of prototype)
-Project Purpose: Snappy is a local-first developer tool to create, store, list, verify, and share database snapshots (initially SQL dumps) enriched with strong metadata and secure one-time sharing. Goals: simplicity, reliability, rich manifest metadata (Manifest v2), fast O(1) listing via indexes, optional compression, tagging & filtering, minimal retention, secure single-use sharing tokens, and maintainable modular architecture (Domain / Application / Infrastructure / CLI / Support). Backwards compatibility with the prototype is NOT required.
-Rewrite Note: Clean rewrite; breaking changes are acceptable and expected. No deprecation warnings or transitional alias layers; legacy command names will be replaced outright.
-Global Constraints: Plain PHP (>=8.1) with optional Composer. Avoid unnecessary complexity. Security focus ONLY on integrity and confidentiality of shared / one-time export artifacts (not local storage hardening). Policies beyond simple retention deferred.
-Context Recap: system() with redirection hides errors; no stdout/stderr capture.
-Objective: Replace system() usage with ProcessRunner capturing stdout, stderr, exit code, duration.
-Rationale: Improves error reporting; enables later logging and compression pipeline reliability.
-Dependencies: None (can follow T1.3 for richer errors).
-Preconditions: Snapshot creation currently working.
-Scope (In): Support/Process/ProcessRunner, integration in snapshot creation path.
-Scope (Out): Async exec, streaming progress.
-Implementation Steps:
- 1. Create ProcessResult value object (exitCode, stdout, stderr, durationMs).
- 2. Implement ProcessRunner::run(array $command, array $env=[], ?int $timeout=null): ProcessResult using proc_open.
- 3. Replace snapshot_manager::create_sql_backup system() call with runner; build command array rather than shell string.
- 4. If exitCode != 0 throw ProcessFailedException with truncated stderr (first 10 lines) and full stored for future use (T3.3).
- 5. Provide environment override SNAPPY_TDB_BIN for binary path.
-Data Structures: ProcessResult class.
-File Targets: New ProcessRunner file; modify snapshot_manager.
-Testing & Validation: Force failure by setting invalid SNAPPY_TDB_BIN; verify exception & exit code.
-Acceptance Criteria: Successful snapshot unaffected; failures produce informative error.
-Edge Cases: Large outputs—truncate memory stored output after 1MB.
-Rollback Strategy: Restore system() call and remove ProcessRunner class.
-Risks & Mitigations: Potential path quoting issues—use array form to avoid shell escaping.
-Follow-Up Tasks: Logging (T3.3) will consume captured streams.
-Time Estimate: S.
-Deliverables: ProcessRunner, updated snapshot_manager.
-Agent Execution Checklist:
- - [ ] Create ProcessRunner
- - [ ] Integrate into snapshot creation
- - [ ] Test success & failure paths
- - [ ] Commit
-
--------------------------------------------------------------------
-T2.1 Manifest Schema v2 Draft
--------------------------------------------------------------------
-ID: T2.1
-Title: Define Manifest v2 Schema
-Project Name: Snappy (rewrite of prototype)
-Project Purpose: Snappy is a local-first developer tool to create, store, list, verify, and share database snapshots (initially SQL dumps) enriched with strong metadata and secure one-time sharing. Goals: simplicity, reliability, rich manifest metadata (Manifest v2), fast O(1) listing via indexes, optional compression, tagging & filtering, minimal retention, secure single-use sharing tokens, and maintainable modular architecture (Domain / Application / Infrastructure / CLI / Support). Backwards compatibility with the prototype is NOT required.
-Rewrite Note: Clean rewrite; breaking changes are acceptable and expected. No deprecation warnings or transitional alias layers; legacy command names will be replaced outright.
-Global Constraints: Plain PHP (>=8.1) with optional Composer. Avoid unnecessary complexity. Security focus ONLY on integrity and confidentiality of shared / one-time export artifacts (not local storage hardening). Policies beyond simple retention deferred.
-Context Recap: meta.json minimal; need richer metadata for indexing, filtering, compression, provenance.
-Objective: Author schema/manifest_v2.json + example illustrating all fields.
-Rationale: Provides contract for dual writing & future validation.
-Dependencies: None (post T1.* helpful but not mandatory).
-Preconditions: Autoload and baseline manifest (meta.json) present.
-Scope (In): schema file, example manifest, optional validator script.
-Scope (Out): Reader changes (handled T2.3), writing logic (T2.2).
-Implementation Steps:
- 1. Create schema directory if absent.
- 2. Define JSON schema (draft 2020-12 or custom) with fields: schema_version=2, uid, created_utc (Z), snapshot_type, message, tags[], files[{name,size_bytes,compressed,compression_algo?}], checksums{algo:"sha256", files{filename:hash}}, size_total_bytes, compression{enabled,algo?,original_size_bytes?,compressed_size_bytes?,ratio?}, provenance{command_line, host, user, php_version}, custom_metadata(object), db(optional {engine, version}).
- 3. Create manifest_v2.example.json populating sample realistic values.
- 4. (Optional) validator script validate_manifest.php loads schema + example; outputs PASS/FAIL.
-Data Structures: JSON schema + example.
-File Targets: schema/manifest_v2.json, schema/manifest_v2.example.json, optional validate_manifest.php.
-Testing & Validation: Run validator script; ensure example passes.
-Acceptance Criteria: Schema & example committed; validator (if built) returns success.
-Edge Cases: Optional sections omitted should still validate.
-Rollback Strategy: Remove schema directory content.
-Risks & Mitigations: Over-engineering—ensure only fields needed by roadmap are present.
-Follow-Up Tasks: T2.2 dual write, T2.3 loader.
-Time Estimate: S.
-Deliverables: Schema file + example.
-Agent Execution Checklist:
- - [ ] Create schema file
- - [ ] Add example
- - [ ] (Optional) Add validator
- - [ ] Commit
-
--------------------------------------------------------------------
-T2.2 Dual Write (v1 + v2)
--------------------------------------------------------------------
-ID: T2.2
-Title: Dual Manifest Writing
-Project Name: Snappy (rewrite of prototype)
-Project Purpose: Snappy is a local-first developer tool to create, store, list, verify, and share database snapshots (initially SQL dumps) enriched with strong metadata and secure one-time sharing. Goals: simplicity, reliability, rich manifest metadata (Manifest v2), fast O(1) listing via indexes, optional compression, tagging & filtering, minimal retention, secure single-use sharing tokens, and maintainable modular architecture (Domain / Application / Infrastructure / CLI / Support). Backwards compatibility with the prototype is NOT required.
-Rewrite Note: Clean rewrite; breaking changes are acceptable and expected. No deprecation warnings or transitional alias layers; legacy command names will be replaced outright.
-Global Constraints: Plain PHP (>=8.1) with optional Composer. Avoid unnecessary complexity. Security focus ONLY on integrity and confidentiality of shared / one-time export artifacts (not local storage hardening). Policies beyond simple retention deferred.
-Context Recap: Need to produce new manifest-v2.json while retaining meta.json until loader unifies.
-Objective: Modify snapshot creation to write manifest-v2.json alongside legacy meta.json.
-Rationale: Transitional compatibility and immediate enrichment.
-Dependencies: T2.1 schema.
-Preconditions: Snap creation functional (after T1.*).
-Scope (In): Modify snapshot_manager create routine; compute new fields.
-Scope (Out): Reading changes.
-Implementation Steps:
- 1. After dump completion gather file stats (size bytes).
- 2. Build manifest v2 data per schema including compression.enabled=false initially.
- 3. Capture provenance (implode $argv, host, user, php version).
- 4. Calculate size_total_bytes (sum file sizes).
- 5. Write manifest-v2.json; keep meta.json logic unchanged.
- 6. Add lightweight integrity assertion (#files match).
-Data Structures: manifest-v2 JSON.
-File Targets: snapshot_manager (modify), new manifest-v2.json per snapshot.
-Testing & Validation: Create snapshot; verify both files exist & manifest matches schema via validator.
-Acceptance Criteria: Two manifest files present; no errors.
-Edge Cases: Partial creation failure => ensure neither file left inconsistent (atomic write: write temp then rename).
-Rollback Strategy: Remove v2 write block.
-Risks & Mitigations: Race conditions minimal (single-process assumption).
-Follow-Up Tasks: Loader (T2.3).
-Time Estimate: S.
-Deliverables: Updated snapshot creation + manifest-v2.json outputs.
-Agent Execution Checklist:
- - [ ] Modify creation code
- - [ ] Generate new manifest
- - [ ] Validate schema
- - [ ] Commit
-
--------------------------------------------------------------------
-T2.3 Unified Read via Adapter
--------------------------------------------------------------------
-ID: T2.3
-Title: SnapshotLoader (Unified Manifest Reader)
-Project Name: Snappy (rewrite of prototype)
-Project Purpose: Snappy is a local-first developer tool to create, store, list, verify, and share database snapshots (initially SQL dumps) enriched with strong metadata and secure one-time sharing. Goals: simplicity, reliability, rich manifest metadata (Manifest v2), fast O(1) listing via indexes, optional compression, tagging & filtering, minimal retention, secure single-use sharing tokens, and maintainable modular architecture (Domain / Application / Infrastructure / CLI / Support). Backwards compatibility with the prototype is NOT required.
-Rewrite Note: Clean rewrite; breaking changes are acceptable and expected. No deprecation warnings or transitional alias layers; legacy command names will be replaced outright.
-Global Constraints: Plain PHP (>=8.1) with optional Composer. Avoid unnecessary complexity. Security focus ONLY on integrity and confidentiality of shared / one-time export artifacts (not local storage hardening). Policies beyond simple retention deferred.
-Context Recap: Need single internal structure irrespective of manifest version.
-Objective: Implement loader selecting manifest-v2.json if present else meta.json, returning normalized structure.
-Rationale: Simplifies list, index, tagging, compression features.
-Dependencies: T2.2 dual writing.
-Preconditions: At least one snapshot created with both manifests.
-Scope (In): SnapshotLoader class; update listing & read_meta calls.
-Scope (Out): JSON output formatting.
-Implementation Steps:
- 1. Create Domain/Snapshot/SnapshotLoader.php.
-  2. load($uidOrPath): detect file; parse JSON; map to unified array: {uid, created_utc, type, message, tags[], files[{name,size_bytes,compressed}], checksums{file=>hash}, size_total_bytes, raw_version}.
- 3. Fallback: If only meta.json exists: infer created_utc=created, type=type, tags=[], size_total_bytes= sum of existing file sizes.
- 4. Add minimal validation (missing critical fields => throw ValidationException).
- 5. Refactor snapshot_manager::read_meta to call loader (rename to read_manifest or keep wrapper calling loader->load()).
- 6. Adjust list command to use normalized output (message first line extraction maintained).
-Data Structures: Normalized snapshot array.
-File Targets: New loader, modifications in snapshot_manager and listing command.
-Testing & Validation: Create old + new; remove v2 to simulate fallback; list still works.
-Acceptance Criteria: List output unchanged; loader handles missing v2 gracefully.
-Edge Cases: Corrupt v2 but valid meta => fallback with warning to STDERR.
-Rollback Strategy: Revert loader usage.
-Risks & Mitigations: Partial parse errors—explicit try/catch to fallback.
-Follow-Up Tasks: Index (T4.1) & compression.
-Time Estimate: M.
-Deliverables: Loader class + integrated usage.
-Agent Execution Checklist:
- - [ ] Create loader
- - [ ] Integrate with snapshot_manager
- - [ ] Update list logic
- - [ ] Test scenarios
- - [ ] Commit
-
--------------------------------------------------------------------
-T3.1 Dump Provider Interface
--------------------------------------------------------------------
-ID: T3.1
-Title: Introduce DumpProvider Abstraction
-Project Name: Snappy (rewrite of prototype)
-Project Purpose: Snappy is a local-first developer tool to create, store, list, verify, and share database snapshots (initially SQL dumps) enriched with strong metadata and secure one-time sharing. Goals: simplicity, reliability, rich manifest metadata (Manifest v2), fast O(1) listing via indexes, optional compression, tagging & filtering, minimal retention, secure single-use sharing tokens, and maintainable modular architecture (Domain / Application / Infrastructure / CLI / Support). Backwards compatibility with the prototype is NOT required.
-Rewrite Note: Clean rewrite; breaking changes are acceptable and expected. No deprecation warnings or transitional alias layers; legacy command names will be replaced outright.
-Global Constraints: Plain PHP (>=8.1) with optional Composer. Avoid unnecessary complexity. Security focus ONLY on integrity and confidentiality of shared / one-time export artifacts (not local storage hardening). Policies beyond simple retention deferred.
-Context Recap: Snapshot creation directly invokes tdb via system call.
-Objective: Create interface for dump providers enabling future DB sources and test stubbing.
-Rationale: Extensibility & testability.
-Dependencies: ProcessRunner (T1.4).
-Preconditions: Manifest v2 writing functional.
-Scope (In): Interface, default provider (TdbDumpProvider), provider resolver.
-Scope (Out): Additional provider implementations.
-Implementation Steps:
- 1. Define Domain/Snapshot/DumpProviderInterface.php (supports(context), dump(uid, targetDir, options)).
- 2. Create DumpResult value object: {files: [{name,path}], metadata: {engine, version}}.
- 3. Implement TdbDumpProvider: builds command using SNAPPY_TDB_BIN or 'tdb'; runs via ProcessRunner.
- 4. ProviderResolver returns first provider supports() (only one now returns true).
- 5. Modify snapshot creation: provider->dump(); iterate result.files copying into snapshot dir; build checksums.
-Data Structures: DumpResult class.
-File Targets: New interface & provider classes; snapshot_manager modifications.
-Testing & Validation: Snapshot creation success; simulate failure (bad binary path) yields ProcessFailedException.
-Acceptance Criteria: Behavior unchanged externally; provider mechanism present.
-Edge Cases: No provider supports => throw ValidationException.
-Rollback Strategy: Inline logic removal revert.
-Risks & Mitigations: Minimal; ensure provider registration executed before creation.
-Follow-Up Tasks: Compression (T3.2).
-Time Estimate: M.
-Deliverables: Interface + default provider + resolver integration.
-Agent Execution Checklist:
- - [ ] Add interface & classes
- - [ ] Integrate in snapshot creation
- - [ ] Test success/failure
- - [ ] Commit
-
--------------------------------------------------------------------
-T3.2 Compression Support (gzip baseline)
--------------------------------------------------------------------
-ID: T3.2
-Title: Add Optional Gzip Compression
-Project Name: Snappy (rewrite of prototype)
-Project Purpose: Snappy is a local-first developer tool to create, store, list, verify, and share database snapshots (initially SQL dumps) enriched with strong metadata and secure one-time sharing. Goals: simplicity, reliability, rich manifest metadata (Manifest v2), fast O(1) listing via indexes, optional compression, tagging & filtering, minimal retention, secure single-use sharing tokens, and maintainable modular architecture (Domain / Application / Infrastructure / CLI / Support). Backwards compatibility with the prototype is NOT required.
-Rewrite Note: Clean rewrite; breaking changes are acceptable and expected. No deprecation warnings or transitional alias layers; legacy command names will be replaced outright.
-Global Constraints: Plain PHP (>=8.1) with optional Composer. Avoid unnecessary complexity. Security focus ONLY on integrity and confidentiality of shared / one-time export artifacts (not local storage hardening). Policies beyond simple retention deferred.
-Context Recap: Dumps stored raw; no size optimization.
-Objective: Implement --compress flag to gzip primary dump file; record compression details.
-Rationale: Space efficiency and metadata completeness.
-Dependencies: T2.2 dual write; T3.1 provider (for clean integration) beneficial.
-Preconditions: Snapshot creation stable.
-Scope (In): CLI flag, compression logic, manifest updates, file rename to backup.sql.gz.
-Scope (Out): Advanced algos (zstd), transparent lazy decompress.
-Implementation Steps:
- 1. Extend snap command parser to accept --compress.
- 2. After provider dump, if flag set: gzip file (use PHP gzencode or external gzip) -> write backup.sql.gz; remove original.
- 3. Update checksum calculation to use compressed file.
- 4. meta.json files list becomes ["backup.sql.gz"] (breaking allowed); manifest-v2 compression.enabled=true, compression.algo=gzip, original_size_bytes, compressed_size_bytes, compression_ratio.
- 5. Update loader fallback recognizing .gz extension.
-Data Structures: Manifest compression fields.
-File Targets: snap command, snapshot_manager (or service class), loader adjustments.
-Testing & Validation: Create compressed snapshot; verify backup.sql.gz exists; gunzip -t; checksum stable.
-Acceptance Criteria: Compression works; metadata fields correct; non-compressed path unaffected.
-Edge Cases: Missing zlib extension => fallback to external gzip; if both unavailable error clearly.
-Rollback Strategy: Remove compression branch & revert file naming.
-Risks & Mitigations: Data loss risk if deletion before success—perform atomic rename after successful compress.
-Follow-Up Tasks: Archive export uses compressed file.
-Time Estimate: S.
-Deliverables: Compressed snapshot capability.
-Agent Execution Checklist:
- - [ ] Add flag parsing
- - [ ] Implement compression
- - [ ] Update manifests
- - [ ] Test both paths
- - [ ] Commit
-
--------------------------------------------------------------------
-T3.3 Exit Code & Log Capture
--------------------------------------------------------------------
-ID: T3.3
-Title: Capture Dump Logs & Failure Handling
-Project Name: Snappy (rewrite of prototype)
-Project Purpose: Snappy is a local-first developer tool to create, store, list, verify, and share database snapshots (initially SQL dumps) enriched with strong metadata and secure one-time sharing. Goals: simplicity, reliability, rich manifest metadata (Manifest v2), fast O(1) listing via indexes, optional compression, tagging & filtering, minimal retention, secure single-use sharing tokens, and maintainable modular architecture (Domain / Application / Infrastructure / CLI / Support). Backwards compatibility with the prototype is NOT required.
-Rewrite Note: Clean rewrite; breaking changes are acceptable and expected. No deprecation warnings or transitional alias layers; legacy command names will be replaced outright.
-Global Constraints: Plain PHP (>=8.1) with optional Composer. Avoid unnecessary complexity. Security focus ONLY on integrity and confidentiality of shared / one-time export artifacts (not local storage hardening). Policies beyond simple retention deferred.
-Context Recap: ProcessRunner collects output; not persisted yet; failures leave limited trace.
-Objective: Persist dump stdout/stderr to logs/dump.log on failure (and optionally summary on success) with --keep-failed flag to retain artifacts.
-Rationale: Diagnostic clarity.
-Dependencies: T1.4 ProcessRunner; T3.1 provider integration.
-Preconditions: Provider returns output.
-Scope (In): Logging directory creation, failure handling cleanup.
-Scope (Out): Log rotation, central log index.
-Implementation Steps:
- 1. Before dump, create temp path $SNAPPY_SNAPSHOT_ROOT/tmp/<uid>/.
- 2. Run provider; on failure write logs/dump.log (include command, exitCode, timestamps, stdout, stderr).
- 3. If success: optionally move subset of log or skip (configurable later).
- 4. If failure & --keep-failed not set: delete temp directory; else preserve for analysis.
- 5. On success, promote temp to final snapshot dir.
-Data Structures: Plain text log.
-File Targets: snapshot creation logic.
-Testing & Validation: Force failure; confirm log presence; ensure no empty snapshot folder persisted unless keep flag set.
-Acceptance Criteria: Failure path yields log + non-zero exit; success path unchanged.
-Edge Cases: Write permission failure -> display fallback inline truncated stderr.
-Rollback Strategy: Remove logging code block.
-Risks & Mitigations: Disk accumulation—future retention may purge temp.
-Follow-Up Tasks: doctor command might check orphaned temp dirs.
-Time Estimate: S.
-Deliverables: Failure log capture.
-Agent Execution Checklist:
- - [ ] Add temp directory logic
- - [ ] Persist logs on failure
- - [ ] Implement --keep-failed
- - [ ] Test success/failure
- - [ ] Commit
-
--------------------------------------------------------------------
-T4.1 Local Snapshot Index
--------------------------------------------------------------------
-ID: T4.1
-Title: Implement Local Index (snapshots/index.json)
-Project Name: Snappy (rewrite of prototype)
-Project Purpose: Snappy is a local-first developer tool to create, store, list, verify, and share database snapshots (initially SQL dumps) enriched with strong metadata and secure one-time sharing. Goals: simplicity, reliability, rich manifest metadata (Manifest v2), fast O(1) listing via indexes, optional compression, tagging & filtering, minimal retention, secure single-use sharing tokens, and maintainable modular architecture (Domain / Application / Infrastructure / CLI / Support). Backwards compatibility with the prototype is NOT required.
-Rewrite Note: Clean rewrite; breaking changes are acceptable and expected. No deprecation warnings or transitional alias layers; legacy command names will be replaced outright.
-Global Constraints: Plain PHP (>=8.1) with optional Composer. Avoid unnecessary complexity. Security focus ONLY on integrity and confidentiality of shared / one-time export artifacts (not local storage hardening). Policies beyond simple retention deferred.
-Context Recap: Listing iterates dirs; scaling poor beyond dozens of snapshots.
-Objective: Maintain snapshots/index.json summarizing snapshot essentials for O(1) listing.
-Rationale: Performance and foundation for filtering & prune.
-Dependencies: T2.3 loader for normalized records.
-Preconditions: Several snapshots exist.
-Scope (In): IndexManager, incremental update on create/delete, rebuild command.
-Scope (Out): Remote index (T4.2), advanced staleness detection.
-Implementation Steps:
- 1. Schema: {version:1, generated_utc, snapshots:[{uid, created_utc, message_first, tags, size_total_bytes, compression:{enabled,algo}, files_count}]}.
- 2. Write IndexManager with addOrUpdate(uid), remove(uid), rebuild().
- 3. Hook snapshot creation to addOrUpdate.
- 4. Create CLI command snapshot index rebuild.
- 5. Modify list to: if index exists use it unless --no-index passed.
-Data Structures: index.json.
-File Targets: New IndexManager, list command modifications.
-Testing & Validation: Create N snapshots; benchmark before/after (manual acceptable). Remove one snapshot dir manually then rebuild.
-Acceptance Criteria: list uses index; shows consistent data; rebuild restores accuracy after manual tampering.
-Edge Cases: Corrupt index => automatic rebuild fallback.
-Rollback Strategy: Remove index logic & revert list changes.
-Risks & Mitigations: Stale index risk—rebuild command available.
-Follow-Up Tasks: Tag filtering (T8.*), prune (T9.*).
-Time Estimate: M.
-Deliverables: index.json maintenance & CLI integration.
-Agent Execution Checklist:
- - [ ] Implement IndexManager
- - [ ] Hook into creation
- - [ ] Add rebuild command
- - [ ] Modify list
- - [ ] Test scenarios
- - [ ] Commit
-
--------------------------------------------------------------------
-T4.2 Remote Summary Index
--------------------------------------------------------------------
-ID: T4.2
-Title: Remote Summary Index (snaps/index.json)
-Project Name: Snappy (rewrite of prototype)
-Project Purpose: Snappy is a local-first developer tool to create, store, list, verify, and share database snapshots (initially SQL dumps) enriched with strong metadata and secure one-time sharing. Goals: simplicity, reliability, rich manifest metadata (Manifest v2), fast O(1) listing via indexes, optional compression, tagging & filtering, minimal retention, secure single-use sharing tokens, and maintainable modular architecture (Domain / Application / Infrastructure / CLI / Support). Backwards compatibility with the prototype is NOT required.
-Rewrite Note: Clean rewrite; breaking changes are acceptable and expected. No deprecation warnings or transitional alias layers; legacy command names will be replaced outright.
-Global Constraints: Plain PHP (>=8.1) with optional Composer. Avoid unnecessary complexity. Security focus ONLY on integrity and confidentiality of shared / one-time export artifacts (not local storage hardening). Policies beyond simple retention deferred.
-Context Recap: Remote listing currently scans object store prefix; inefficient.
-Objective: Maintain remote index file on push to accelerate list --remote.
-Rationale: Reduces API calls and latency for remote operations.
-Dependencies: T4.1 local index model.
-Preconditions: Working push command; remote registry functioning.
-Scope (In): RemoteIndexManager, update on push, remote listing consumption.
-Scope (Out): Concurrency conflict resolution (simple last write wins acceptable).
-Implementation Steps:
- 1. Read existing remote snaps/index.json if exists; parse; else initialize empty structure.
- 2. Merge/update summary row for pushed snapshot(s).
-  3. Write temp file snaps/index.json.tmp then overwrite snaps/index.json (atomic enough for S3).
- 4. Modify list remote path to prefer index file; fall back to scan if absent.
-Data Structures: Same schema as local index.
-File Targets: Remote index manager, push & list remote code modifications.
-Testing & Validation: Push snapshot; verify remote index includes entry by reading object; list remote returns quickly.
-Acceptance Criteria: Remote listing uses index; fallback works if index missing or corrupt.
-Edge Cases: Concurrent push lost update—acceptable initial risk.
-Rollback Strategy: Remove index handling code.
-Risks & Mitigations: Partial writes—accept ephemeral; next push repairs.
-Follow-Up Tasks: Share features leveraging remote summaries.
-Time Estimate: M.
-Deliverables: Remote index support.
-Agent Execution Checklist:
- - [ ] Implement RemoteIndexManager
- - [ ] Update push logic
- - [ ] Adjust remote list
- - [ ] Test push/list cycle
- - [ ] Commit
-
--------------------------------------------------------------------
-T5.1 Command Namespace Restructure
--------------------------------------------------------------------
-ID: T5.1
-Title: Hierarchical Command Restructure (Replace Legacy Names)
-Project Name: Snappy (rewrite of prototype)
-Project Purpose: Snappy is a local-first developer tool to create, store, list, verify, and share database snapshots (initially SQL dumps) enriched with strong metadata and secure one-time sharing. Goals: simplicity, reliability, rich manifest metadata (Manifest v2), fast O(1) listing via indexes, optional compression, tagging & filtering, minimal retention, secure single-use sharing tokens, and maintainable modular architecture (Domain / Application / Infrastructure / CLI / Support). Backwards compatibility with the prototype is NOT required.
-Rewrite Note: Clean rewrite; breaking changes are acceptable and expected. No deprecation warnings or transitional alias layers; legacy command names will be replaced outright.
-Global Constraints: Plain PHP (>=8.1) with optional Composer. Avoid unnecessary complexity. Security focus ONLY on integrity and confidentiality of shared / one-time export artifacts (not local storage hardening). Policies beyond simple retention deferred.
-Context Recap: Single-word commands limit clarity; new design requires grouped verbs.
-Objective: Implement router supporting primary verb + subcommand (snapshot create/list/show, share create/list, prune, verify, config get/set) and eliminate legacy names.
-Rationale: Improves discoverability & future extensibility.
-Dependencies: Index (T4.1) helpful; not strictly required.
-Preconditions: Existing commands working baseline.
-Scope (In): New router, new command classes, removal of old snap/push/pull/list remote command names.
-Scope (Out): JSON output (T5.2), help enhancements (T5.3).
-Implementation Steps:
- 1. Add CLI/Framework/CommandRouter parsing argv[1..]. pattern: primary + sub.
- 2. Define mapping table of (primary, sub) to handler class.
- 3. Implement new command classes snapshot.create, snapshot.list, snapshot.show, share.create, share.list, prune.run (or prune), verify.run, config.get/set.
- 4. Remove old command registration files (or adapt them to new naming if code reused).
- 5. Update tsnap_cli.php to instantiate router and dispatch.
- 6. Adjust README (in later docs milestone) placeholder note.
-Data Structures: Router internal map {"snapshot:create"=>Class}.
-File Targets: New router file; new command files; removal or modification of old command classes.
-Testing & Validation: Run snapshot create, snapshot list; ensure old 'snap' fails with error.
-Acceptance Criteria: New commands operational; old names gone; error on old usage is clear.
-Edge Cases: Missing subcommand prints usage summary.
-Rollback Strategy: Reintroduce legacy mapping (not desired per rewrite note).
-Risks & Mitigations: User confusion—document new names quickly.
-Follow-Up Tasks: Add JSON output (T5.2), help generator (T5.3).
-Time Estimate: M.
-Deliverables: Router + new command set.
-Agent Execution Checklist:
- - [ ] Implement router
- - [ ] Create new command handlers
- - [ ] Remove legacy commands
- - [ ] Validate new commands
- - [ ] Commit
-
--------------------------------------------------------------------
-T5.2 JSON / Quiet / Color Flags
--------------------------------------------------------------------
-ID: T5.2
-Title: Global Output Modes (--json, --quiet, --no-color)
-Project Name: Snappy (rewrite of prototype)
-Project Purpose: Snappy is a local-first developer tool to create, store, list, verify, and share database snapshots (initially SQL dumps) enriched with strong metadata and secure one-time sharing. Goals: simplicity, reliability, rich manifest metadata (Manifest v2), fast O(1) listing via indexes, optional compression, tagging & filtering, minimal retention, secure single-use sharing tokens, and maintainable modular architecture (Domain / Application / Infrastructure / CLI / Support). Backwards compatibility with the prototype is NOT required.
-Rewrite Note: Clean rewrite; breaking changes are acceptable and expected. No deprecation warnings or transitional alias layers; legacy command names will be replaced outright.
-Global Constraints: Plain PHP (>=8.1) with optional Composer. Avoid unnecessary complexity. Security focus ONLY on integrity and confidentiality of shared / one-time export artifacts (not local storage hardening). Policies beyond simple retention deferred.
-Context Recap: Current output plain text; scripts require structured JSON.
-Objective: Introduce OutputFormatter supporting tabular & JSON modes, quiet suppression, ANSI color toggle.
-Rationale: Automation & readability.
-Dependencies: T5.1 router for early flag parsing.
-Preconditions: New command structure exists.
-Scope (In): Global flag parse, output abstraction, consistent error formatting integration with exceptions.
-Scope (Out): Pagination, advanced TTY detection heuristics.
-Implementation Steps:
- 1. Parse global flags before command dispatch: --json, --quiet, --no-color.
- 2. Implement OutputFormatter with API: info(msg), table(headers, rows), json(data), error(msg, code).
- 3. If --json: all normal outputs aggregated & printed as single JSON {command, status, data, errors?}.
- 4. --quiet suppresses info/table when not JSON; errors still emitted.
- 5. Colors default on if stream_isatty(STDOUT) unless --no-color.
-Data Structures: Output JSON shape stable.
-File Targets: New formatter file; modify router & commands to use it.
-Testing & Validation: snapshot list --json piped to jq; quiet mode suppresses banner output.
-Acceptance Criteria: Consistent JSON schema; non-JSON mode unaffected except color handling.
-Edge Cases: Both quiet and json => JSON still output.
-Rollback Strategy: Revert formatter integration.
-Risks & Mitigations: Commands forgetting to use formatter—perform grep audit.
-Follow-Up Tasks: Help generator uses formatter (T5.3).
-Time Estimate: S.
-Deliverables: OutputFormatter + integrated usage.
-Agent Execution Checklist:
- - [ ] Add formatter
- - [ ] Update router & commands
- - [ ] Test JSON & quiet
- - [ ] Commit
-
--------------------------------------------------------------------
-T5.3 Improved Help & Examples
--------------------------------------------------------------------
-ID: T5.3
-Title: Metadata-Driven Help System
-Project Name: Snappy (rewrite of prototype)
-Project Purpose: Snappy is a local-first developer tool to create, store, list, verify, and share database snapshots (initially SQL dumps) enriched with strong metadata and secure one-time sharing. Goals: simplicity, reliability, rich manifest metadata (Manifest v2), fast O(1) listing via indexes, optional compression, tagging & filtering, minimal retention, secure single-use sharing tokens, and maintainable modular architecture (Domain / Application / Infrastructure / CLI / Support). Backwards compatibility with the prototype is NOT required.
-Rewrite Note: Clean rewrite; breaking changes are acceptable and expected. No deprecation warnings or transitional alias layers; legacy command names will be replaced outright.
-Global Constraints: Plain PHP (>=8.1) with optional Composer. Avoid unnecessary complexity. Security focus ONLY on integrity and confidentiality of shared / one-time export artifacts (not local storage hardening). Policies beyond simple retention deferred.
-Context Recap: Help currently minimal; lacks grouping & examples.
-Objective: Generate help dynamically grouped by domain (Snapshot, Share, Maintenance, Config).
-Rationale: Faster onboarding; clearer discoverability.
-Dependencies: T5.1 & T5.2 (formatter).
-Preconditions: Commands expose metadata.
-Scope (In): Command metadata interface, help command generating structured output & JSON variant.
-Scope (Out): Man page generation.
-Implementation Steps:
- 1. Each command class implements method metadata(): {name, group, description, usage, examples[]}.
- 2. help command iterates registry -> groups -> prints sections.
- 3. If --json global flag set: output metadata array.
-Data Structures: Metadata array.
-File Targets: Help command rewrite; command base class modifications.
-Testing & Validation: Run help; verify grouping; run help --json parse success.
-Acceptance Criteria: All commands present with examples; JSON mode returns structured listing.
-Edge Cases: Missing group defaults to "Other".
-Rollback Strategy: Restore prior static help.
-Risks & Mitigations: Incomplete metadata—fail CI later with metadata validator (future task).
-Follow-Up Tasks: Add metadata validation test.
-Time Estimate: XS.
-Deliverables: Dynamic help system.
-Agent Execution Checklist:
- - [ ] Add metadata methods
- - [ ] Rewrite help command
- - [ ] Test text & JSON output
- - [ ] Commit
-
--------------------------------------------------------------------
-T6.1 Share Token Model
--------------------------------------------------------------------
-ID: T6.1
-Title: Implement Single-Use Share Tokens
-Project Name: Snappy (rewrite of prototype)
-Project Purpose: Snappy is a local-first developer tool to create, store, list, verify, and share database snapshots (initially SQL dumps) enriched with strong metadata and secure one-time sharing. Goals: simplicity, reliability, rich manifest metadata (Manifest v2), fast O(1) listing via indexes, optional compression, tagging & filtering, minimal retention, secure single-use sharing tokens, and maintainable modular architecture (Domain / Application / Infrastructure / CLI / Support). Backwards compatibility with the prototype is NOT required.
-Rewrite Note: Clean rewrite; breaking changes are acceptable and expected. No deprecation warnings or transitional alias layers; legacy command names will be replaced outright.
-Global Constraints: Plain PHP (>=8.1) with optional Composer. Avoid unnecessary complexity. Security focus ONLY on integrity and confidentiality of shared / one-time export artifacts (not local storage hardening). Policies beyond simple retention deferred.
-Context Recap: Need ephemeral secure share referencing snapshot without copying.
-Objective: share create <uid> --expire=1h returns raw token; stores hashed record with metadata.
-Rationale: Enables minimal controlled sharing.
-Dependencies: SnapshotLoader (T2.3) for message/tags.
-Preconditions: Snapshot exists locally.
-Scope (In): shares.json registry, token generation, expiry parsing, single-use marking.
-Scope (Out): Remote downloading, encryption, pre-signed URLs.
-Implementation Steps:
- 1. Path: $SNAPPY_SNAPSHOT_ROOT/.snappy/shares.json {version:1, tokens:[...] }.
- 2. Generate token raw = base64url(random_bytes(24)); store sha256(raw) as token_hash; never store raw.
- 3. Parse --expire (default 24h) support suffix m,h,d.
- 4. Record: uid, created_utc (UTC), expires_utc, used_utc=null, meta {tags, message_first_line}.
- 5. Flush JSON atomically (temp file rename).
- 6. Output raw token once.
-Data Structures: shares.json schema.
-File Targets: share create command new or extension.
-Testing & Validation: create token; ensure raw not in file; expiry logic correct.
-Acceptance Criteria: Token created; share list (future optional) shows hashed entry; raw reusable only until fetch.
-Edge Cases: Duplicate hash improbable; regenerate if collision.
-Rollback Strategy: Remove share command & shares.json.
-Risks & Mitigations: Clock skew—treat server local time authoritative.
-Follow-Up Tasks: Fetch (T6.2), archive export (T6.3).
-Time Estimate: M.
-Deliverables: share create implementation + shares.json.
-Agent Execution Checklist:
- - [ ] Implement token generator
- - [ ] Write shares.json update logic
- - [ ] Test creation & expiry parsing
- - [ ] Commit
-
--------------------------------------------------------------------
-T6.2 Share Retrieval Flow
--------------------------------------------------------------------
-ID: T6.2
-Title: share fetch <token>
-Project Name: Snappy (rewrite of prototype)
-Project Purpose: Snappy is a local-first developer tool to create, store, list, verify, and share database snapshots (initially SQL dumps) enriched with strong metadata and secure one-time sharing. Goals: simplicity, reliability, rich manifest metadata (Manifest v2), fast O(1) listing via indexes, optional compression, tagging & filtering, minimal retention, secure single-use sharing tokens, and maintainable modular architecture (Domain / Application / Infrastructure / CLI / Support). Backwards compatibility with the prototype is NOT required.
-Rewrite Note: Clean rewrite; breaking changes are acceptable and expected. No deprecation warnings or transitional alias layers; legacy command names will be replaced outright.
-Global Constraints: Plain PHP (>=8.1) with optional Composer. Avoid unnecessary complexity. Security focus ONLY on integrity and confidentiality of shared / one-time export artifacts (not local storage hardening). Policies beyond simple retention deferred.
-Context Recap: Tokens created; no consumption path yet.
-Objective: Resolve token -> mark used -> return local snapshot path.
-Rationale: Completes minimal sharing round-trip.
-Dependencies: T6.1.
-Preconditions: Valid token exists.
-Scope (In): share fetch command, token validation, usage marking.
-Scope (Out): Remote retrieval, presigned downloads.
-Implementation Steps:
- 1. Input raw token; compute sha256; search shares.json for token_hash with used_utc null and expires_utc > now.
- 2. If not found or expired => error.
- 3. Mark used_utc now; write file atomically.
- 4. Output snapshot path & uid.
-Data Structures: shares.json update.
-File Targets: share fetch command file.
-Testing & Validation: Create token then fetch; second fetch fails.
-Acceptance Criteria: Single-use enforced; proper errors on reuse or expiry.
-Edge Cases: Race condition multiple fetch attempts simultaneous—first wins; second fails.
-Rollback Strategy: Remove command code.
-Risks & Mitigations: None significant.
-Follow-Up Tasks: Archive export & encryption.
-Time Estimate: S.
-Deliverables: share fetch command.
-Agent Execution Checklist:
- - [ ] Implement fetch logic
- - [ ] Update shares.json usage
- - [ ] Test single-use
- - [ ] Commit
-
--------------------------------------------------------------------
-T6.3 Optional Archive Export for Share
--------------------------------------------------------------------
-ID: T6.3
-Title: Archive Export (--as-archive)
-Project Name: Snappy (rewrite of prototype)
-Project Purpose: Snappy is a local-first developer tool to create, store, list, verify, and share database snapshots (initially SQL dumps) enriched with strong metadata and secure one-time sharing. Goals: simplicity, reliability, rich manifest metadata (Manifest v2), fast O(1) listing via indexes, optional compression, tagging & filtering, minimal retention, secure single-use sharing tokens, and maintainable modular architecture (Domain / Application / Infrastructure / CLI / Support). Backwards compatibility with the prototype is NOT required.
-Rewrite Note: Clean rewrite; breaking changes are acceptable and expected. No deprecation warnings or transitional alias layers; legacy command names will be replaced outright.
-Global Constraints: Plain PHP (>=8.1) with optional Composer. Avoid unnecessary complexity. Security focus ONLY on integrity and confidentiality of shared / one-time export artifacts (not local storage hardening). Policies beyond simple retention deferred.
-Context Recap: Some sharing requires portable file artifact.
-Objective: share create --as-archive produce tar.gz + checksum.
-Rationale: Simplicity of distribution.
-Dependencies: T6.1 (token), T3.2 (compression optional synergy).
-Preconditions: Snapshot exists.
-Scope (In): Tar/gzip packaging, checksum file, metadata referencing archive path.
-Scope (Out): Encryption (T7.1), remote upload.
-Implementation Steps:
- 1. Create exports/ under snapshot root if absent.
-  2. Tar directory (exclude exports/ to prevent nesting) -> snapshot_<uid>.tar then gzip -> .tar.gz.
- 3. Generate sha256 -> snapshot_<uid>.tar.gz.sha256 containing HASH filename.
- 4. Add archive_path & archive_checksum to token meta when using --as-archive.
-Data Structures: Extended token meta.
-File Targets: share create command modifications.
-Testing & Validation: Extract archive; compare file count & checksum.
-Acceptance Criteria: Archive & checksum files generated; meta updated.
-Edge Cases: Large snapshot memory—ensure streaming tar implementation.
-Rollback Strategy: Remove archive code path & exports directory contents.
-Risks & Mitigations: Disk space—clean old exports via future prune.
-Follow-Up Tasks: Encryption T7.1.
-Time Estimate: S.
-Deliverables: Archive creation capability.
-Agent Execution Checklist:
- - [ ] Implement tar/gzip
- - [ ] Generate checksum
- - [ ] Update meta
- - [ ] Test extraction
- - [ ] Commit
-
--------------------------------------------------------------------
-T6.4 Pre-signed URL Support (Optional)
--------------------------------------------------------------------
-ID: T6.4
-Title: S3 Presigned Share Links
-Project Name: Snappy (rewrite of prototype)
-Project Purpose: Snappy is a local-first developer tool to create, store, list, verify, and share database snapshots (initially SQL dumps) enriched with strong metadata and secure one-time sharing. Goals: simplicity, reliability, rich manifest metadata (Manifest v2), fast O(1) listing via indexes, optional compression, tagging & filtering, minimal retention, secure single-use sharing tokens, and maintainable modular architecture (Domain / Application / Infrastructure / CLI / Support). Backwards compatibility with the prototype is NOT required.
-Rewrite Note: Clean rewrite; breaking changes are acceptable and expected. No deprecation warnings or transitional alias layers; legacy command names will be replaced outright.
-Global Constraints: Plain PHP (>=8.1) with optional Composer. Avoid unnecessary complexity. Security focus ONLY on integrity and confidentiality of shared / one-time export artifacts (not local storage hardening). Policies beyond simple retention deferred.
-Context Recap: For remote snapshots already pushed to S3, direct download preferable.
-Objective: share create --remote=<name> --presign to embed presigned GET URLs.
-Rationale: Avoid local re-transfer.
-Dependencies: Working S3 storage + push flow; token model.
-Preconditions: Snapshot present on remote.
-Scope (In): Presign generation, share meta injection, fetch logic to download if local snapshot missing.
-Scope (Out): Multi-cloud providers.
-Implementation Steps:
- 1. Validate remote type s3.
- 2. For each file + manifest-v2 generate URL valid until token expiry.
- 3. Append meta.presigned = [{file,url,expires_utc}].
- 4. share fetch: if snapshot absent locally & presigned set -> download files -> reconstruct manifest & meta.json.
-Data Structures: Presigned array meta.
-File Targets: share create & fetch commands; storage S3 add presign helper if missing.
-Testing & Validation: Create token with presign; fetch on clean machine path; verify files.
-Acceptance Criteria: Download success; token consumed; local snapshot created.
-Edge Cases: Expired URL before fetch -> error advising new share.
-Rollback Strategy: Remove presign branch logic.
-Risks & Mitigations: URL leakage risk—advice to keep token secure.
-Follow-Up Tasks: Encryption of archive separate.
-Time Estimate: M.
-Deliverables: Presigned share feature.
-Agent Execution Checklist:
- - [ ] Implement presign creation
- - [ ] Update token meta
- - [ ] Enhance fetch logic
- - [ ] Test download path
- - [ ] Commit
-
--------------------------------------------------------------------
-T7.1 Archive-Level Encryption (Share Only, optional) #NOTDONE
--------------------------------------------------------------------
-ID: T7.1
-Title: Encrypt Shared Archive (--encrypt)
-Project Name: Snappy (rewrite of prototype)
-Project Purpose: Snappy is a local-first developer tool to create, store, list, verify, and share database snapshots (initially SQL dumps) enriched with strong metadata and secure one-time sharing. Goals: simplicity, reliability, rich manifest metadata (Manifest v2), fast O(1) listing via indexes, optional compression, tagging & filtering, minimal retention, secure single-use sharing tokens, and maintainable modular architecture (Domain / Application / Infrastructure / CLI / Support). Backwards compatibility with the prototype is NOT required.
-Rewrite Note: Clean rewrite; breaking changes are acceptable and expected. No deprecation warnings or transitional alias layers; legacy command names will be replaced outright.
-Global Constraints: Plain PHP (>=8.1) with optional Composer. Avoid unnecessary complexity. Security focus ONLY on integrity and confidentiality of shared / one-time export artifacts (not local storage hardening). Policies beyond simple retention deferred.
-Context Recap: Archives may contain sensitive data; optional encryption needed.
-Objective: share create --as-archive --encrypt passphrase -> produce .enc file + remove plaintext archive by default.
-Rationale: Protect confidentiality in transit.
-Dependencies: T6.3 archive.
-Preconditions: libsodium or OpenSSL available.
-Scope (In): Scrypt KDF, XChaCha20-Poly1305 (libsodium) or AES-256-GCM fallback.
-Scope (Out): Key management (user supplies passphrase), streaming restore pipeline.
-Implementation Steps:
- 1. Prompt for passphrase (if not SNAPPY_PASSPHRASE env) with confirmation.
- 2. Generate salt (random 16 bytes); derive key via scrypt(N=2^15,r=8,p=1).
- 3. Encrypt archive streaming to snapshot_<uid>.tar.gz.enc; include header JSON (algo, salt, nonce, version) followed by ciphertext.
- 4. Compute sha256 of ciphertext store as snapshot_<uid>.tar.gz.enc.sha256.
- 5. Unless --keep-plaintext remove original tar.gz.
- 6. Update token meta: encrypted=true, encryption_algo, kdf, salt_b64, nonce_b64.
- 7. Provide share decrypt <file> command to reverse.
-Data Structures: Header JSON at start of .enc file.
-File Targets: share create modifications, new decrypt command.
-Testing & Validation: Encrypt + decrypt round-trip; verify archive checksum matches pre-encryption.
-Acceptance Criteria: Encrypted file produced; decryption restores valid tar.gz; metadata updated.
-Edge Cases: Weak passphrase warning (length < 8) -> confirm override.
-Rollback Strategy: Remove encryption code path.
-Risks & Mitigations: Performance overhead—acceptable for initial size ranges.
-Follow-Up Tasks: Possibly integrate with verify to assert encryption state.
-Time Estimate: M.
-Deliverables: Encryption + decryption commands.
-Agent Execution Checklist:
- - [ ] Implement KDF & encryption
- - [ ] Add decrypt command
- - [ ] Test round-trip
- - [ ] Commit
-
--------------------------------------------------------------------
-T7.2 Manifest Signature (Optional) #NOTDONE
--------------------------------------------------------------------
-ID: T7.2
-Title: HMAC Sign manifest-v2.json
-Project Name: Snappy (rewrite of prototype)
-Project Purpose: Snappy is a local-first developer tool to create, store, list, verify, and share database snapshots (initially SQL dumps) enriched with strong metadata and secure one-time sharing. Goals: simplicity, reliability, rich manifest metadata (Manifest v2), fast O(1) listing via indexes, optional compression, tagging & filtering, minimal retention, secure single-use sharing tokens, and maintainable modular architecture (Domain / Application / Infrastructure / CLI / Support). Backwards compatibility with the prototype is NOT required.
-Rewrite Note: Clean rewrite; breaking changes are acceptable and expected. No deprecation warnings or transitional alias layers; legacy command names will be replaced outright.
-Global Constraints: Plain PHP (>=8.1) with optional Composer. Avoid unnecessary complexity. Security focus ONLY on integrity and confidentiality of shared / one-time export artifacts (not local storage hardening). Policies beyond simple retention deferred.
-Context Recap: Want simple tamper detection when sharing.
-Objective: If SNAPPY_SIGN_KEY env present, produce manifest-v2.sig (HMAC-SHA256 base64) and verify command.
-Rationale: Integrity assurance without full PKI.
-Dependencies: Manifest v2 writing.
-Preconditions: sign key environment variable set for tests.
-Scope (In): Signing on creation/push, verify command logic.
-Scope (Out): Public key cryptography.
-Implementation Steps:
- 1. On snapshot creation: if key present compute hmac; write manifest-v2.sig.
- 2. Add verify manifest <uid> command or extend verify.
- 3. Verification: recompute HMAC; compare; output pass/fail.
-Data Structures: Small .sig file with base64 string.
-File Targets: snapshot creation code, verify command.
-Testing & Validation: Modify manifest manually; verify fails.
-Acceptance Criteria: Signature file present when key set; verify indicates status.
-Edge Cases: Missing key when verifying signed manifest -> warning.
-Rollback Strategy: Remove signing branch.
-Risks & Mitigations: Key rotation unsupported—document limitation.
-Follow-Up Tasks: Possible future public key signatures.
-Time Estimate: S.
-Deliverables: Signature generation & verification.
-Agent Execution Checklist:
- - [ ] Add signing code
- - [ ] Extend verify command
- - [ ] Test tamper detection
- - [ ] Commit
-
--------------------------------------------------------------------
-T8.1 Tag Add/Remove
--------------------------------------------------------------------
-ID: T8.1
-Title: Tag Management Commands
-Project Name: Snappy (rewrite of prototype)
-Project Purpose: Snappy is a local-first developer tool to create, store, list, verify, and share database snapshots (initially SQL dumps) enriched with strong metadata and secure one-time sharing. Goals: simplicity, reliability, rich manifest metadata (Manifest v2), fast O(1) listing via indexes, optional compression, tagging & filtering, minimal retention, secure single-use sharing tokens, and maintainable modular architecture (Domain / Application / Infrastructure / CLI / Support). Backwards compatibility with the prototype is NOT required.
-Rewrite Note: Clean rewrite; breaking changes are acceptable and expected. No deprecation warnings or transitional alias layers; legacy command names will be replaced outright.
-Global Constraints: Plain PHP (>=8.1) with optional Composer. Avoid unnecessary complexity. Security focus ONLY on integrity and confidentiality of shared / one-time export artifacts (not local storage hardening). Policies beyond simple retention deferred.
-Context Recap: Need structured classification beyond message text.
-Objective: Allow adding/removing tags to snapshot; persist & index.
-Rationale: Enables filtering (T8.2) and retention safety.
-Dependencies: Index (T4.1), Manifest v2 loader.
-Preconditions: Snapshot exists.
-Scope (In): snapshot tag <uid> add/remove <tag> updates manifest-v2 & index.
-Scope (Out): Bulk operations by pattern.
-Implementation Steps:
- 1. Validate tag regex ^[a-z0-9][a-z0-9_-]{0,31}$.
- 2. Load manifest; modify tags array; sync index.
- 3. Atomic write manifest-v2.json (temp rename).
- 4. Provide show command printing tags line.
-Data Structures: tags[] string list.
-File Targets: New tag command or subcommand file, index update call.
-Testing & Validation: Add then remove tag; verify index reflects.
-Acceptance Criteria: Tag persists; duplicates ignored silently.
-Edge Cases: Removing non-existent tag returns success with note.
-Rollback Strategy: Remove tag command.
-Risks & Mitigations: Concurrent tag operations low probability.
-Follow-Up Tasks: Filtering (T8.2), prune protected tags.
-Time Estimate: S.
-Deliverables: Tagging capability.
-Agent Execution Checklist:
- - [ ] Implement add/remove
- - [ ] Update index
- - [ ] Test scenarios
- - [ ] Commit
-
--------------------------------------------------------------------
-T8.2 Filter Syntax
--------------------------------------------------------------------
-ID: T8.2
-Title: Implement List Filtering (--filter)
-Project Name: Snappy (rewrite of prototype)
-Project Purpose: Snappy is a local-first developer tool to create, store, list, verify, and share database snapshots (initially SQL dumps) enriched with strong metadata and secure one-time sharing. Goals: simplicity, reliability, rich manifest metadata (Manifest v2), fast O(1) listing via indexes, optional compression, tagging & filtering, minimal retention, secure single-use sharing tokens, and maintainable modular architecture (Domain / Application / Infrastructure / CLI / Support). Backwards compatibility with the prototype is NOT required.
-Rewrite Note: Clean rewrite; breaking changes are acceptable and expected. No deprecation warnings or transitional alias layers; legacy command names will be replaced outright.
-Global Constraints: Plain PHP (>=8.1) with optional Composer. Avoid unnecessary complexity. Security focus ONLY on integrity and confidentiality of shared / one-time export artifacts (not local storage hardening). Policies beyond simple retention deferred.
-Context Recap: Index contains metadata; need filtering for workflows.
-Objective: Support basic AND expressions (tag=, type=, age<, age>, uid=prefix).
-Rationale: Efficient targeted listing.
-Dependencies: Tags (T8.1), index.
-Preconditions: Index with sample data.
-Scope (In): Parser, evaluator, integration in list command.
-Scope (Out): OR, parentheses, regex.
-Implementation Steps:
- 1. Tokenize filter string by spaces; expect pattern field<op>value joined by AND.
- 2. Supported ops: =, <, > for age comparators.
- 3. age value parse suffix (m,h,d) to seconds.
- 4. Evaluate conditions sequentially over index snapshot rows.
- 5. If invalid syntax -> ValidationException.
-Data Structures: Condition array [{field, op, value}].
-File Targets: FilterParser class, list command modifications.
-Testing & Validation: Use multiple snapshots with tags & varying ages; assert results.
-Acceptance Criteria: Correct subsets returned; invalid input yields clear error.
-Edge Cases: No snapshots => empty result without error.
-Rollback Strategy: Remove filter parser integration.
-Risks & Mitigations: Over-parsing complexity—keep minimal.
-Follow-Up Tasks: Extend grammar later if needed.
-Time Estimate: M.
-Deliverables: Filtering capability.
-Agent Execution Checklist:
- - [ ] Add parser
- - [ ] Integrate evaluation
- - [ ] Test cases
- - [ ] Commit
-
--------------------------------------------------------------------
-T9.1 Prune By Count
--------------------------------------------------------------------
-ID: T9.1
-Title: Prune Old Snapshots (Keep Last N)
-Project Name: Snappy (rewrite of prototype)
-Project Purpose: Snappy is a local-first developer tool to create, store, list, verify, and share database snapshots (initially SQL dumps) enriched with strong metadata and secure one-time sharing. Goals: simplicity, reliability, rich manifest metadata (Manifest v2), fast O(1) listing via indexes, optional compression, tagging & filtering, minimal retention, secure single-use sharing tokens, and maintainable modular architecture (Domain / Application / Infrastructure / CLI / Support). Backwards compatibility with the prototype is NOT required.
-Rewrite Note: Clean rewrite; breaking changes are acceptable and expected. No deprecation warnings or transitional alias layers; legacy command names will be replaced outright.
-Global Constraints: Plain PHP (>=8.1) with optional Composer. Avoid unnecessary complexity. Security focus ONLY on integrity and confidentiality of shared / one-time export artifacts (not local storage hardening). Policies beyond simple retention deferred.
-Context Recap: Storage may bloat; need simple retention.
-Objective: prune --keep-last=N remove older non-protected snapshots (protected tag baseline).
-Rationale: Disk management.
-Dependencies: Index, tags.
-Preconditions: Multiple snapshots present.
-Scope (In): Prune command with dry-run (default) and --apply.
-Scope (Out): Complex policy DSL.
-Implementation Steps:
- 1. Parse N; load index; sort by created_utc desc.
- 2. Mark protected snapshots (tag baseline) never deleted.
- 3. Identify candidates beyond N; display list if dry-run.
- 4. If --apply: delete directories + remove from index.
-Data Structures: None new.
-File Targets: prune command file, index update after deletes.
-Testing & Validation: Create N+2 snapshots; prune keep-last N; verify only extras removed.
-Acceptance Criteria: Dry-run safe; apply deletes expected; index consistent.
-Edge Cases: N >= count => no action.
-Rollback Strategy: No built-in restore; communicate risk.
-Risks & Mitigations: Accidental deletion—dry-run default.
-Follow-Up Tasks: Age prune (T9.2).
-Time Estimate: S.
-Deliverables: Prune count feature.
-Agent Execution Checklist:
- - [ ] Implement command
- - [ ] Test dry-run & apply
- - [ ] Commit
-
--------------------------------------------------------------------
-T9.2 Prune By Age
--------------------------------------------------------------------
-ID: T9.2
-Title: Age-Based Prune (--max-age)
-Project Name: Snappy (rewrite of prototype)
-Project Purpose: Snappy is a local-first developer tool to create, store, list, verify, and share database snapshots (initially SQL dumps) enriched with strong metadata and secure one-time sharing. Goals: simplicity, reliability, rich manifest metadata (Manifest v2), fast O(1) listing via indexes, optional compression, tagging & filtering, minimal retention, secure single-use sharing tokens, and maintainable modular architecture (Domain / Application / Infrastructure / CLI / Support). Backwards compatibility with the prototype is NOT required.
-Rewrite Note: Clean rewrite; breaking changes are acceptable and expected. No deprecation warnings or transitional alias layers; legacy command names will be replaced outright.
-Global Constraints: Plain PHP (>=8.1) with optional Composer. Avoid unnecessary complexity. Security focus ONLY on integrity and confidentiality of shared / one-time export artifacts (not local storage hardening). Policies beyond simple retention deferred.
-Context Recap: Need time-duration based removal.
-Objective: prune --max-age=30d remove snapshots older than threshold (excluding protected tags).
-Rationale: Automated hygiene.
-Dependencies: T9.1.
-Preconditions: Snapshots with varying created_utc values.
-Scope (In): Duration parsing, combination logic with keep-last.
-Scope (Out): Complex expressions.
-Implementation Steps:
- 1. Parse duration; compute cutoff time.
- 2. Filter index snapshots older than cutoff excluding protected.
- 3. Combine with keep-last if both provided (intersection of candidate sets or union? Choose union for broader deletion clarity; document).
- 4. Dry-run / apply actions same as T9.1.
-Data Structures: None new.
-File Targets: Extend prune command.
-Testing & Validation: Adjust manifest created_utc manually for test; run prune.
-Acceptance Criteria: Only targets older; protected tags preserved.
-Edge Cases: Invalid duration format -> ValidationException.
-Rollback Strategy: Remove age branch.
-Risks & Mitigations: Over deletion clarity—present counts before apply.
-Follow-Up Tasks: None.
-Time Estimate: XS.
-Deliverables: Age prune capability.
-Agent Execution Checklist:
- - [ ] Add duration parsing
- - [ ] Integrate with prune logic
- - [ ] Test scenarios
- - [ ] Commit
-
--------------------------------------------------------------------
-T10.1 Test Framework Setup
--------------------------------------------------------------------
-ID: T10.1
-Title: Add PHPUnit Test Harness
-Project Name: Snappy (rewrite of prototype)
-Project Purpose: Snappy is a local-first developer tool to create, store, list, verify, and share database snapshots (initially SQL dumps) enriched with strong metadata and secure one-time sharing. Goals: simplicity, reliability, rich manifest metadata (Manifest v2), fast O(1) listing via indexes, optional compression, tagging & filtering, minimal retention, secure single-use sharing tokens, and maintainable modular architecture (Domain / Application / Infrastructure / CLI / Support). Backwards compatibility with the prototype is NOT required.
-Rewrite Note: Clean rewrite; breaking changes are acceptable and expected. No deprecation warnings or transitional alias layers; legacy command names will be replaced outright.
-Global Constraints: Plain PHP (>=8.1) with optional Composer. Avoid unnecessary complexity. Security focus ONLY on integrity and confidentiality of shared / one-time export artifacts (not local storage hardening). Policies beyond simple retention deferred.
-Context Recap: No automated tests; risk of regression.
-Objective: Introduce PHPUnit (or Pest) baseline with one unit test.
-Rationale: Foundation for later integration tests.
-Dependencies: Composer (T1.1).
-Preconditions: composer.json present.
-Scope (In): phpunit dev dependency, bootstrap config, first test (UID generation uniqueness/pattern).
-Scope (Out): High coverage.
-Implementation Steps:
- 1. composer require --dev phpunit/phpunit.
- 2. Add phpunit.xml.dist in project root (tests/ as source).
-  3. tests/bootstrap.php sets env SNAPPY_SNAPSHOT_ROOT to temp path.
- 4. Write tests/unit/UidTest.php verifying uniqueness and length.
- 5. Update .gitignore for /coverage (if coverage used later).
-Data Structures: None.
-File Targets: composer.json update, phpunit.xml.dist, tests/*.
-Testing & Validation: vendor/bin/phpunit passes.
-Acceptance Criteria: Test suite runs green.
-Edge Cases: None.
-Rollback Strategy: Remove dev dependency & test files.
-Risks & Mitigations: Minimal.
-Follow-Up Tasks: Integration tests.
-Time Estimate: S.
-Deliverables: Test harness.
-Agent Execution Checklist:
- - [ ] Add dependency
- - [ ] Add config & bootstrap
- - [ ] Add unit test
- - [ ] Run tests
- - [ ] Commit
-
--------------------------------------------------------------------
-T10.2 Integration Tests (Local)
--------------------------------------------------------------------
-ID: T10.2
-Title: Local Snapshot Flow Test
-Project Name: Snappy (rewrite of prototype)
-Project Purpose: Snappy is a local-first developer tool to create, store, list, verify, and share database snapshots (initially SQL dumps) enriched with strong metadata and secure one-time sharing. Goals: simplicity, reliability, rich manifest metadata (Manifest v2), fast O(1) listing via indexes, optional compression, tagging & filtering, minimal retention, secure single-use sharing tokens, and maintainable modular architecture (Domain / Application / Infrastructure / CLI / Support). Backwards compatibility with the prototype is NOT required.
-Rewrite Note: Clean rewrite; breaking changes are acceptable and expected. No deprecation warnings or transitional alias layers; legacy command names will be replaced outright.
-Global Constraints: Plain PHP (>=8.1) with optional Composer. Avoid unnecessary complexity. Security focus ONLY on integrity and confidentiality of shared / one-time export artifacts (not local storage hardening). Policies beyond simple retention deferred.
-Context Recap: Need end-to-end coverage for snapshot creation & listing.
-Objective: Implement test that simulates snapshot create, list, tag, verify.
-Rationale: Detect regressions across core path.
-Dependencies: T10.1, T3.1 provider abstraction (enable stub provider).
-Preconditions: Test harness running.
-Scope (In): Use stub provider producing small file; isolate env.
-Scope (Out): Remote operations.
-Implementation Steps:
- 1. Add stub provider class under tests/fixtures.
- 2. Inject via environment flag or provider registry override in test bootstrap.
- 3. Run CLI commands via ProcessRunner inside test.
- 4. Assertions: manifest-v2.json exists; list returns entry; tag add persists.
-Data Structures: Stub output file.
-File Targets: tests/integration/SnapshotFlowTest.php, fixtures.
-Testing & Validation: Run phpunit group integration.
-Acceptance Criteria: Test passes consistently.
-Edge Cases: Path collisions—use unique temp dir.
-Rollback Strategy: Remove integration test files.
-Risks & Mitigations: Race issues minimal.
-Follow-Up Tasks: Remote integration (T10.3).
-Time Estimate: M.
-Deliverables: Integration test.
-Agent Execution Checklist:
- - [ ] Add stub provider
- - [ ] Write test
- - [ ] Run & verify
- - [ ] Commit
-
--------------------------------------------------------------------
-T10.3 S3 MinIO Integration Test
--------------------------------------------------------------------
-ID: T10.3
-Title: Remote Push/Pull Integration (s3)
-Project Name: Snappy (rewrite of prototype)
-Project Purpose: Snappy is a local-first developer tool to create, store, list, verify, and share database snapshots (initially SQL dumps) enriched with strong metadata and secure one-time sharing. Goals: simplicity, reliability, rich manifest metadata (Manifest v2), fast O(1) listing via indexes, optional compression, tagging & filtering, minimal retention, secure single-use sharing tokens, and maintainable modular architecture (Domain / Application / Infrastructure / CLI / Support). Backwards compatibility with the prototype is NOT required.
-Rewrite Note: Clean rewrite; breaking changes are acceptable and expected. No deprecation warnings or transitional alias layers; legacy command names will be replaced outright.
-Global Constraints: Plain PHP (>=8.1) with optional Composer. Avoid unnecessary complexity. Security focus ONLY on integrity and confidentiality of shared / one-time export artifacts (not local storage hardening). Policies beyond simple retention deferred.
-Context Recap: Need to validate remote operations work.
-Objective: Spin up MinIO, configure S3 remote, push then pull snapshot verifying checksum.
-Rationale: Confidence in remote storage layer.
-Dependencies: T10.2 integration foundation, Docker available.
-Preconditions: MinIO accessible (skip test if not).
-Scope (In): Docker spin-up script, test case orchestrating push/pull.
-Scope (Out): Multipart/parallel uploads.
-Implementation Steps:
- 1. Add tests/integration/RemoteMinioTest.php.
- 2. In setUp: run docker to start MinIO container with ephemeral credentials.
- 3. Wait for health endpoint.
- 4. Configure remote via CLI remote add.
- 5. Create snapshot; push to remote; remove local snapshot folder; pull; verify checksum.
- 6. Tear down container.
-Data Structures: None.
-File Targets: Remote test file & optional helper script.
-Testing & Validation: phpunit group remote.
-Acceptance Criteria: Test passes; no leftover containers.
-Edge Cases: Docker absent env var -> mark test skipped.
-Rollback Strategy: Remove test & helpers.
-Risks & Mitigations: Flakiness—add retry for health check.
-Follow-Up Tasks: Presigned sharing test (future).
-Time Estimate: M.
-Deliverables: Remote integration test.
-Agent Execution Checklist:
- - [ ] Implement test
- - [ ] Add docker run logic
- - [ ] Validate push/pull
- - [ ] Commit
-
--------------------------------------------------------------------
-T10.4 Share Token Flow Test
--------------------------------------------------------------------
-ID: T10.4
-Title: Share Token Single-Use Integration Test
-Project Name: Snappy (rewrite of prototype)
-Project Purpose: Snappy is a local-first developer tool to create, store, list, verify, and share database snapshots (initially SQL dumps) enriched with strong metadata and secure one-time sharing. Goals: simplicity, reliability, rich manifest metadata (Manifest v2), fast O(1) listing via indexes, optional compression, tagging & filtering, minimal retention, secure single-use sharing tokens, and maintainable modular architecture (Domain / Application / Infrastructure / CLI / Support). Backwards compatibility with the prototype is NOT required.
-Rewrite Note: Clean rewrite; breaking changes are acceptable and expected. No deprecation warnings or transitional alias layers; legacy command names will be replaced outright.
-Global Constraints: Plain PHP (>=8.1) with optional Composer. Avoid unnecessary complexity. Security focus ONLY on integrity and confidentiality of shared / one-time export artifacts (not local storage hardening). Policies beyond simple retention deferred.
-Context Recap: Token creation & fetch logic must be reliable.
-Objective: Validate share create + fetch single-use enforcement.
-Rationale: Prevent reuse vulnerabilities.
-Dependencies: T6.2 share fetch implemented.
-Preconditions: Share features implemented.
-Scope (In): Integration test simulating token creation & consumption.
-Scope (Out): Presigned / encryption.
-Implementation Steps:
- 1. Create snapshot via stub provider.
- 2. Create token (capture raw token).
- 3. Fetch using token => success.
- 4. Re-fetch token => expect failure.
-Data Structures: None.
-File Targets: tests/integration/ShareTokenTest.php.
-Testing & Validation: phpunit group share.
-Acceptance Criteria: Test passes; reuse fails with expected error code.
-Edge Cases: Expired token scenario optional test.
+====================================================================================================================
+T14B Manifest v2 Contract Freeze (Canonical Hash Guard)
+====================================================================================================================
+ID: T14B
+Title: Manifest v2 Schema Contract Freeze (Golden Hash Test, tar.gz context)
+Development Context Prompt (repeat for this ticket):
+Execute with strict steps: restate, inspect manifest example + planned test files, implement canonicalizer & test, no extra refactors, run full test suite, commit "T14B feat(schema): ...".
+Project Name: Snappy
+Project Purpose: (Universal Context)
+Rewrite Note: Reinforces manifest determinism pre IntegrityService/export.
+Context Recap: Manifest exists but mutable; exporter/importer/share rely on stable shape & canonical hash.
+Objective: Freeze manifest_v2 schema via canonical JSON hashing test + documentation of change protocol.
+Rationale: Prevent accidental breaking changes mid-cycle.
+Dependencies: T14A (baseline trimmed) recommended.
+Preconditions: schema/manifest_v2.json & example present.
+Scope (In): Canonicalizer helper; golden test; docs/schema_change.md referencing tar.gz artifact.
+Scope (Out): Runtime validation integration.
+Implementation Steps: (same as universal but ensure artifact spec link).
+Data Structures: expected hash constant.
+File Targets: tests/schema/CanonicalJson.php, tests/schema/ManifestV2FreezeTest.php, docs/schema_change.md.
+Testing & Validation: Editing example without updating hash fails test with clear instructions.
+Acceptance Criteria: Golden test passes; documentation present.
+Edge Cases: Whitespace changes do not affect canonical form.
 Rollback Strategy: Remove test.
-Risks & Mitigations: Low.
-Follow-Up Tasks: Encryption test (later).
-Time Estimate: S.
-Deliverables: Share token integration test.
+Risks & Mitigations: Slows schema iteration—acceptable.
+Follow-Up Tasks: T14C IntegrityService.
+Time Estimate: XS.
+Deliverables: Freeze test & docs.
 Agent Execution Checklist:
- - [ ] Write test
- - [ ] Run & verify
- - [ ] Commit
+ - [ ] Implement canonicalizer
+ - [ ] Add freeze test
+ - [ ] Add schema change doc
+ - [ ] Run tests & commit (T14B feat(schema): freeze manifest v2)
 
--------------------------------------------------------------------
-T11.1 Hash Store Prototype
--------------------------------------------------------------------
-ID: T11.1
-Title: Optional Content-Addressable Storage Prototype
-Project Name: Snappy (rewrite of prototype)
-Project Purpose: Snappy is a local-first developer tool to create, store, list, verify, and share database snapshots (initially SQL dumps) enriched with strong metadata and secure one-time sharing. Goals: simplicity, reliability, rich manifest metadata (Manifest v2), fast O(1) listing via indexes, optional compression, tagging & filtering, minimal retention, secure single-use sharing tokens, and maintainable modular architecture (Domain / Application / Infrastructure / CLI / Support). Backwards compatibility with the prototype is NOT required.
-Rewrite Note: Clean rewrite; breaking changes are acceptable and expected. No deprecation warnings or transitional alias layers; legacy command names will be replaced outright.
-Global Constraints: Plain PHP (>=8.1) with optional Composer. Avoid unnecessary complexity. Security focus ONLY on integrity and confidentiality of shared / one-time export artifacts (not local storage hardening). Policies beyond simple retention deferred.
-Context Recap: Duplicate snapshot files waste space.
-Objective: Store artifacts by hash under objects/ and reference them in manifest without duplication.
-Rationale: Size efficiency, groundwork for dedupe.
-Dependencies: Manifest v2.
-Preconditions: Snapshots created normally.
-Scope (In): Optional flag at creation; object path logic; manifest additions (object_hash, stored_inline bool).
-Scope (Out): Retroactive migration; GC (T11.2).
-Implementation Steps:
- 1. After compression, compute sha256.
- 2. Object path: objects/sha256/ab/<fullhash> (first two chars subdir).
- 3. If not exists copy file; else discard local duplicate and symlink or copy referencing object (choose copy if symlink portability concern; store pointer in manifest?).
- 4. In manifest file entry add object_hash and maybe original logical name.
- 5. Add flag detection to enable path.
-Data Structures: Extended file entry.
-File Targets: snapshot creation logic, manifest builder.
-Testing & Validation: Create two identical snapshots; second should not duplicate object file size (if using hardlink or copy detection measure).
-Acceptance Criteria: Hash object reused; manifest reflects object_hash.
-Edge Cases: Symlink unsupported -> fallback to copy.
-Rollback Strategy: Remove flag logic & object referencing.
-Risks & Mitigations: Incomplete cleanup—address in T11.2.
-Follow-Up Tasks: GC.
+====================================================================================================================
+T14C IntegrityService Extraction (Central Hashing for Files, Manifest, Artifact Lines)
+====================================================================================================================
+ID: T14C
+Title: Central IntegrityService (sha256 streaming + canonical manifest + artifact lines)
+Development Context Prompt (repeat for this ticket):
+Implement only hashing consolidation. Replace raw hash usage. Ensure tests prove determinism & tamper detection. Commit "T14C feat(integrity): ...".
+Project Name: Snappy
+Project Purpose: (Universal Context)
+Rewrite Note: Consolidates hash logic before exporter/importer/share/remote listing reliance.
+Context Recap: Current code hashes files ad hoc inside snapshot_manager; no unified canonical JSON hashing.
+Objective: Provide IntegrityService with consistent streaming hashing primitives & file verification.
+Rationale: Single source reduces bugs; enables deterministic export/import.
+Dependencies: T14B.
+Preconditions: Baseline trimmed; tests runnable.
+Scope (In): integrity_service.php with: hashFile, hashStream, hashManifest(array), artifactLinesHash(array lines), verifyFiles(expected map, baseDir) returning VerificationResult struct (ok:boolean, failures:[file=>[expected,actual]]), shortVerificationCode(sha256) for share (base32 first 20 bytes grouped 4-4-4-4-4). Replace direct hash_file calls in snapshot_manager.
+Scope (Out): Artifact tar building (T14D), remote listing enhancements (later).
+Implementation Steps: Implement service; inject / create inside snapshot_manager; adapt code; add tests (determinism, tamper detection, large file streaming memory sanity, shortVerificationCode format).
+Data Structures: VerificationResult array or simple class.
+File Targets: src/snapshot/integrity_service.php, snapshot_manager.php, tests/Integrity/*.
+Testing & Validation: All new tests pass; snapshot create still works.
+Acceptance Criteria: No direct hash_file usage outside IntegrityService.
+Edge Cases: Empty file hashing stable; large file hashed without memory spike.
+Rollback Strategy: Revert service commit.
+Risks & Mitigations: Missed replacement—grep for hash_file.
+Follow-Up Tasks: T14D exporter uses service.
+Time Estimate: S.
+Deliverables: IntegrityService & tests.
+Agent Execution Checklist:
+ - [ ] Add service
+ - [ ] Refactor snapshot_manager
+ - [ ] Add tests
+ - [ ] Run tests & commit (T14C feat(integrity): central hashing)
+
+====================================================================================================================
+T14D Snapshot Export (.tar.gz Streaming Artifact)
+====================================================================================================================
+ID: T14D
+Title: Snapshot Exporter (.tar.gz deterministic streaming)
+Development Context Prompt (repeat for this ticket):
+Focus: deterministic streaming tar.gz generation. No differential export. Validate ordering & hashes. Commit "T14D feat(export): ...".
+Project Name: Snappy
+Project Purpose: (Universal Context)
+Rewrite Note: Replaces prior .snapx with .tar.gz naming; integrates IntegrityService.
+Context Recap: Need portable artifact to share/import & for remote listing replication.
+Objective: Implement snapshot export command writing <uid>.tar.gz containing manifest-v2.json, export.json, files/* in order with deterministic artifact hash.
+Rationale: Foundation for import & share flows.
+Dependencies: T14C, T14B.
+Preconditions: At least one snapshot exists.
+Scope (In): snapshot export <uid|prefix> [--out-dir=DIR] [--stdout] [--no-gzip(optional future flag; skip gzip -> .tar)]; export.json creation; artifact_sha256 logic per universal spec; streaming tar writer (no buffering entire file list). Recompute all file hashes & manifest hash on export for integrity.
+Scope (Out): Encryption, differential exports, remote push.
+Implementation Steps: Build file list; compute hashes streaming; generate lines; artifact_sha256; write export.json; stream tar entries in order; finalize rename; output summary (text|JSON).
+Data Structures: export.json schema_version=1 as specified; lines for artifact hash.
+File Targets: new exporter service (src/snapshot/export_service.php), CLI command src/cli/commands/snapshot_export.php, tests/Snapshot/ExportDeterminismTest.php, ExportOrderingTest.php, LargeFileExportTest.php.
+Testing & Validation: Repeat export stable artifact_sha256; order correct; memory usage bounded.
+Acceptance Criteria: Artifact produced; hash deterministic; tests green.
+Edge Cases: Snapshot with multiple files; zero-byte file; gzip availability; stdout mode piping.
+Rollback Strategy: Revert commit.
+Risks & Mitigations: Tar writer bugs—add small fixture validation.
+Follow-Up Tasks: T14E importer, T14G share.
 Time Estimate: M.
-Deliverables: Content-addressable option.
+Deliverables: Export command & tests.
 Agent Execution Checklist:
- - [ ] Add flag & logic
- - [ ] Implement object path storage
- - [ ] Test duplicate scenario
- - [ ] Commit
+ - [ ] Implement export service
+ - [ ] Add CLI command
+ - [ ] Add tests
+ - [ ] Run tests & commit (T14D feat(export): snapshot tar.gz exporter)
 
--------------------------------------------------------------------
-T11.2 GC for Unreferenced Objects
--------------------------------------------------------------------
-ID: T11.2
-Title: Garbage Collect Orphan Objects
-Project Name: Snappy (rewrite of prototype)
-Project Purpose: Snappy is a local-first developer tool to create, store, list, verify, and share database snapshots (initially SQL dumps) enriched with strong metadata and secure one-time sharing. Goals: simplicity, reliability, rich manifest metadata (Manifest v2), fast O(1) listing via indexes, optional compression, tagging & filtering, minimal retention, secure single-use sharing tokens, and maintainable modular architecture (Domain / Application / Infrastructure / CLI / Support). Backwards compatibility with the prototype is NOT required.
-Rewrite Note: Clean rewrite; breaking changes are acceptable and expected. No deprecation warnings or transitional alias layers; legacy command names will be replaced outright.
-Global Constraints: Plain PHP (>=8.1) with optional Composer. Avoid unnecessary complexity. Security focus ONLY on integrity and confidentiality of shared / one-time export artifacts (not local storage hardening). Policies beyond simple retention deferred.
-Context Recap: Orphan object files accumulate after deleting snapshots.
-Objective: Scan manifests, find referenced object hashes, delete unreferenced from objects/.
-Rationale: Recover disk space.
-Dependencies: T11.1.
-Preconditions: Content-addressable snapshots present.
-Scope (In): gc objects command with --dry-run default; --apply to execute.
-Scope (Out): Quarantine area (could add later).
+====================================================================================================================
+T14E Snapshot Import (.tar.gz Streaming Validation + uid-strategy)
+====================================================================================================================
+ID: T14E
+Title: Snapshot Importer (.tar.gz ingestion & validation)
+Development Context Prompt (repeat for this ticket):
+Goal: streaming validation + uid strategy. Clean temp dirs on failure. No network logic. Commit "T14E feat(import): ...".
+Project Name: Snappy
+Project Purpose: (Universal Context)
+Rewrite Note: Aligns with tar.gz spec; prepares for share import; verify command removed so import must be authoritative.
+Context Recap: Export available; need robust importer for artifact consumption + optional uid regeneration.
+Objective: Implement ImportService + snapshot import CLI performing streaming extraction & hash verification.
+Rationale: Enables distribution & peer workflows safely.
+Dependencies: T14D, T14C.
+Preconditions: Artifact available (path or stdin).
+Scope (In): ImportService importArtifact(path, options) with uidStrategy keep|new, register bool (default true), outDir override, provenance for new; streaming tar(.gz) read; manifest/export validation; recompute hashes & artifact_sha256; atomic promotion to snapshots/; conflict detection when keep and uid exists.
+Scope (Out): Restore execution (separate restore command already exists), remote fetch (share handles network), signature.
+Implementation Steps: Detect gzip via magic; iterate tar entries; track duplicates; compute lines & hashes; validate; apply uidStrategy; write import_provenance.json for new; CLI command added; tests.
+Data Structures: ImportOptions, ImportResult, import_provenance.json {original_uid, original_manifest_sha256, original_artifact_sha256, imported_uid, imported_utc, strategy}.
+File Targets: src/snapshot/import_service.php, src/cli/commands/snapshot_import.php, tests/Snapshot/ImportServiceTest.php, ImportProvenanceTest.php, ImportDuplicateUidTest.php.
+Testing & Validation: Corruption detection (flip byte); duplicate path rejection; multiple new imports produce distinct uids; keep strategy fails on existing; stdin path simulation.
+Acceptance Criteria: All tests green; importer streaming & deterministic; no leftover temp dirs on failure.
+Edge Cases: Missing manifest-v2.json; missing export.json; truncated gzip; invalid artifact hash.
+Rollback Strategy: Revert commit.
+Risks & Mitigations: Partial extraction on failure—ensure cleanup routine.
+Follow-Up Tasks: T14F remote listing, T14G share.
+Time Estimate: M.
+Deliverables: Import service + CLI.
+Agent Execution Checklist:
+ - [ ] Implement service
+ - [ ] Add CLI
+ - [ ] Add tests
+ - [ ] Run tests & commit (T14E feat(import): snapshot importer)
+
+====================================================================================================================
+T14F Remote Management (Config CRUD Only – Defers Listing Integration)
+====================================================================================================================
+ID: T14F
+Title: Remote Config Management (S3 read-only config CRUD – listing integration deferred to T14J)
+Development Context Prompt (repeat for this ticket):
+Implement ONLY remote add/list/remove configuration persistence. Do NOT modify snapshot list yet. Redact secrets. No network listing beyond lightweight credential sanity (optional head bucket best-effort). Commit "T14F feat(remote): config management".
+Project Name: Snappy
+Project Purpose: (Universal Context)
+Rewrite Note: Split original combined config + listing into two smaller tickets (T14F config, T14J listing integration) to keep diffs minimal and reduce risk.
+Context Recap: We need remote definitions (name -> endpoint, bucket, credentials) before we can implement remote snapshot enumeration.
+Objective: Provide stable CRUD for remotes stored in config.json (remotes section) with validation & redaction support.
+Rationale: Establishes foundation for later remote listing, pull, and push features while keeping initial change set very small (git-like incremental evolution).
+Dependencies: T14A baseline (config manager present).
+Preconditions: config.json writable.
+Scope (In):
+ - remote add <name> --endpoint= --bucket= --region= --key= --secret= [--path-style]
+ - remote list (prints table or JSON of configured remotes with redacted credentials)
+ - remote remove <name>
+ - Validation: unique name; required fields non-empty; name pattern ^[a-z0-9][a-z0-9_-]{0,31}$.
+ - Redaction: Show first 4 chars of key only; mask secret entirely (e.g. **** or 8 asterisks) in human output; omit secrets from JSON unless --show-secrets (NOT implemented now – keep simple).
+Scope (Out): snapshot list --remote (T14J), remote pull (T14I), network bucket listing, credentials testing, caching.
 Implementation Steps:
- 1. Collect all object_hash from manifest-v2 files.
- 2. Walk objects/sha256 tree; mark files missing from set.
- 3. If dry-run list candidates; if apply: unlink.
- 4. Summary stats printed (#kept, #removed, bytes reclaimed).
-Data Structures: Set of hashes.
-File Targets: gc command implementation.
-Testing & Validation: Create snapshot, delete manifest snapshot folder leaving object; run gc returns candidate; apply removes.
-Acceptance Criteria: Orphans removed only when apply.
-Edge Cases: Concurrent creation—recommend not running gc concurrently (warn).
-Rollback Strategy: None (destructive) -> caution in docs.
-Risks & Mitigations: Accidental deletion—default dry-run.
-Follow-Up Tasks: Optional quarantine.
+ 1. Extend config_manager to support getRemotes(), saveRemotes().
+ 2. Implement three command classes remote_add.php, remote_list.php, remote_remove.php.
+ 3. Update command_router registration & help grouping.
+ 4. Add tests: add/remove cycle, duplicate add error, remove missing error, redaction in list, JSON output excludes secrets.
+ 5. Docs: update docs/remotes.md (config section) – note listing/pull in future tickets.
+Data Structures: config.json { remotes: { name: {endpoint,bucket,region,key,secret,path_style?:bool} } }.
+File Targets: config_manager.php, new command files, docs/remotes.md, tests/Remote/RemoteConfigTest.php.
+Testing & Validation: PHPUnit tests cover all acceptance criteria.
+Acceptance Criteria:
+ - CRUD works; duplicate prevented; removal of existing succeeds.
+ - Redacted output (no secret leakage) verified by test.
+ - JSON output contains endpoint,bucket,region,path_style; omits key/secret or provides redacted forms consistently.
+Edge Cases: Invalid name -> error code; missing required flags -> usage error (64); config.json absent -> auto create.
+Rollback Strategy: Revert commit.
+Risks & Mitigations: Secret leakage -> enforced redaction tests.
+Follow-Up Tasks: T14J snapshot list remote integration; T14I remote pull.
 Time Estimate: S.
-Deliverables: GC command.
+Deliverables: Remote config commands + tests + docs update.
 Agent Execution Checklist:
- - [ ] Implement command
- - [ ] Test dry-run & apply
- - [ ] Commit
+ - [ ] Implement config manager extensions
+ - [ ] Add command classes
+ - [ ] Add tests
+ - [ ] Update docs
+ - [ ] Run tests & commit (T14F feat(remote): config management)
 
--------------------------------------------------------------------
-T12.1 Doctor Command
--------------------------------------------------------------------
-ID: T12.1
-Title: System Health Diagnostics
-Project Name: Snappy (rewrite of prototype)
-Project Purpose: Snappy is a local-first developer tool to create, store, list, verify, and share database snapshots (initially SQL dumps) enriched with strong metadata and secure one-time sharing. Goals: simplicity, reliability, rich manifest metadata (Manifest v2), fast O(1) listing via indexes, optional compression, tagging & filtering, minimal retention, secure single-use sharing tokens, and maintainable modular architecture (Domain / Application / Infrastructure / CLI / Support). Backwards compatibility with the prototype is NOT required.
-Rewrite Note: Clean rewrite; breaking changes are acceptable and expected. No deprecation warnings or transitional alias layers; legacy command names will be replaced outright.
-Global Constraints: Plain PHP (>=8.1) with optional Composer. Avoid unnecessary complexity. Security focus ONLY on integrity and confidentiality of shared / one-time export artifacts (not local storage hardening). Policies beyond simple retention deferred.
-Context Recap: Users need quick status to troubleshoot issues.
-Objective: doctor command performing config, index, disk, remote connectivity, integrity checks.
-Rationale: Reduces manual debugging.
-Dependencies: Index, loader.
-Preconditions: Snapshots + index present.
-Scope (In): PASS/WARN/FAIL output; exit code non-zero if any FAIL.
-Scope (Out): Auto repair actions.
-Implementation Steps:
- 1. Checks: config parse, index parse, free disk > threshold (200MB), remote list attempt (timeout 3s) each remote, random snapshot checksum verify.
- 2. Provide --json mode.
- 3. Summarize results.
-Data Structures: Diagnostic report array.
-File Targets: doctor command file.
-Testing & Validation: Corrupt index manually test FAIL; remove snapshot file test checksum fail.
-Acceptance Criteria: Accurate status; proper exit codes.
-Edge Cases: No snapshots -> integrity check SKIP not FAIL.
-Rollback Strategy: Remove command.
-Risks & Mitigations: Long remote timeouts—short timeout.
-Follow-Up Tasks: Add more checks later.
+====================================================================================================================
+T14G Ephemeral Share (Peer-to-Peer Encoded Command, tar.gz)
+====================================================================================================================
+ID: T14G
+Title: tsnap share (ephemeral encoded peer transfer)
+Development Context Prompt (repeat for this ticket):
+Implement minimal HTTP server & payload. Enforce TTL/max. Integrity check before import. Commit "T14G feat(share): ...".
+Project Name: Snappy
+Project Purpose: (Universal Context)
+Rewrite Note: Uses export artifact; no central registry; leverages IntegrityService shortVerificationCode.
+Context Recap: Need low-friction handoff after export/import exist; replaces removed legacy share tokens.
+Objective: share create <uid> & share import <ENCODED> implementing encoded payload distribution.
+Rationale: Quick human copy/paste distribution path.
+Dependencies: T14D export, T14E import, T14C IntegrityService.
+Preconditions: Snapshot present; export command available.
+Scope (In): share_create_service, share_http_server (only /health & artifact GET), payload_builder, shortVerificationCode in IntegrityService, provenance file share_provenance.json, options (--listen=:0, --ttl, --max, --multi, --no-auto-export, --uid-strategy override for import).
+Scope (Out): Auth tokens, tunnels, multi-artifact sessions, encryption.
+Implementation Steps: If artifact missing auto export; start server on chosen port; compute payload; print command; count successful downloads; shutdown per limits; import side downloads, verifies sha256, calls ImportService (uid-strategy default new), writes share_provenance.json.
+Data Structures: share_provenance.json {share_version:1, source_host, source_port, artifact, artifact_sha256, verification_code, original_uid, imported_uid, uid_strategy, received_utc, encoded_payload}.
+File Targets: src/share/* new, src/cli/commands/share_share_create.php, share_share_import.php, modify command_router, integrity_service.php (add shortVerificationCode), tests/Share/*.
+Testing & Validation: Round trip test (create server thread/process -> import); tamper detection; TTL expiry; multi limit; code format test; provenance file content.
+Acceptance Criteria: One-line command works; tamper aborts; server enforces limits; provenance recorded; memory stable.
+Edge Cases: Port busy; partial download; malformed payload; expired TTL.
+Rollback Strategy: Remove share files & commands.
+Risks & Mitigations: Hanging server—implement timeout & signal handling.
+Follow-Up Tasks: Optional QR code output.
+Time Estimate: M.
+Deliverables: Share commands & tests.
+Agent Execution Checklist:
+ - [ ] Implement services
+ - [ ] Add commands
+ - [ ] Add tests
+ - [ ] Run tests & commit (T14G feat(share): ephemeral peer share)
+
+====================================================================================================================
+T14H Metrics & GC Refinement (No Verify/Doctor)
+====================================================================================================================
+ID: T14H
+Title: Metrics & GC (post share/remote integration, no verify/doctor)
+Development Context Prompt (repeat for this ticket):
+Provide aggregated stats & safe cleanup only. Guard against deleting active snapshots. Commit "T14H feat(maintenance): ...".
+Project Name: Snappy
+Project Purpose: (Universal Context)
+Rewrite Note: Adjust metrics to rely solely on manifest-v2.json; GC cleans tmp & stale partial imports/export temps.
+Context Recap: With verify/doctor removed, maintenance reduced to metrics & garbage collection.
+Objective: Provide accurate aggregate stats & safe cleanup.
+Rationale: Keep codebase lean while still giving user visibility & hygiene.
+Dependencies: T14D (export manifests standardized), earlier tickets for baseline.
+Preconditions: Snapshots exist.
+Scope (In): metrics command outputs JSON & text: total_snapshots, total_bytes, newest_uid+created, largest_uid+bytes, average_size, compressed_count. gc command: [--dry-run] remove tmp/<uid> older than N hours (default 24), orphan export temp files *.tmp older than 1h.
+Scope (Out): Object hash store cleanup (removed), remote GC.
+Implementation Steps: Update existing metrics & gc implementations or re-write small services; tests verifying dry-run vs real; ensure atomic deletions.
+Data Structures: None new; simple arrays.
+File Targets: metrics command, gc command, tests/Maintenance/*.
+Testing & Validation: Create fixture snapshots; run metrics; assert numbers; create temp dirs/files; run gc dry-run then live.
+Acceptance Criteria: Commands run; gc removes expected entries; no removal of active snapshots.
+Edge Cases: Permission errors (skip with warning); negative ages (ignore).
+Rollback Strategy: Revert commit.
+Risks & Mitigations: Accidental deletion—restrict deletion paths to temp/* and *.tmp in export dir.
+Follow-Up Tasks: None.
 Time Estimate: S.
-Deliverables: Doctor command.
+Deliverables: Updated commands & tests.
 Agent Execution Checklist:
- - [ ] Implement checks
- - [ ] Test scenarios
- - [ ] Commit
+ - [ ] Implement metrics updates
+ - [ ] Implement gc updates
+ - [ ] Add tests
+ - [ ] Run tests & commit (T14H feat(maintenance): metrics & gc refinement)
 
--------------------------------------------------------------------
-T12.2 Metrics Summary
--------------------------------------------------------------------
-ID: T12.2
-Title: Snapshot Metrics Command
-Project Name: Snappy (rewrite of prototype)
-Project Purpose: Snappy is a local-first developer tool to create, store, list, verify, and share database snapshots (initially SQL dumps) enriched with strong metadata and secure one-time sharing. Goals: simplicity, reliability, rich manifest metadata (Manifest v2), fast O(1) listing via indexes, optional compression, tagging & filtering, minimal retention, secure single-use sharing tokens, and maintainable modular architecture (Domain / Application / Infrastructure / CLI / Support). Backwards compatibility with the prototype is NOT required.
-Rewrite Note: Clean rewrite; breaking changes are acceptable and expected. No deprecation warnings or transitional alias layers; legacy command names will be replaced outright.
-Global Constraints: Plain PHP (>=8.1) with optional Composer. Avoid unnecessary complexity. Security focus ONLY on integrity and confidentiality of shared / one-time export artifacts (not local storage hardening). Policies beyond simple retention deferred.
-Context Recap: Need quick stats on data set.
-Objective: metrics command summarizing counts, total size, tag distribution, age buckets (<1d,1-7d,8-30d,>30d).
-Rationale: Capacity insight & retention planning.
-Dependencies: Index.
-Preconditions: Index populated.
-Scope (In): metrics command producing table & JSON.
-Scope (Out): Historical trending storage.
+====================================================================================================================
+T14I Remote Pull (Download Snapshot From Remote S3 Into Local Store)
+====================================================================================================================
+ID: T14I
+Title: Remote Pull (S3 object set → local snapshot directory)
+Development Context Prompt (repeat for this ticket):
+Implement ONLY read/download path from configured remote into local snapshots. Follow strict steps: restate, inspect s3_storage + snapshot_manager, plan minimal service, implement streaming download & integrity check, add CLI command remote pull, add tests (success, missing uid, checksum mismatch), commit "T14I feat(remote): pull snapshot". No scope creep (no push, no resume, no parallel multi-remote). Do not log secrets. Use IntegrityService for verification.
+Project Name: Snappy
+Project Purpose: (Universal Context)
+Rewrite Note: Extends remote read-only capabilities with actual snapshot retrieval (pull) while still avoiding upload/push complexity.
+Context Recap: T14F provided remote configuration and listing. Users now need to materialize a remote snapshot locally to restore or share without re-exporting. Remote buckets store snapshots under snaps/<uid>/ containing manifest-v2.json (preferred) or legacy meta.json + data files.
+Objective: Add remote pull <remote> <uid|prefix> command to download a snapshot directory from a configured remote S3-compatible bucket into local snapshots/, verifying integrity when manifest-v2.json present. Support uid-strategy keep|new similar to import (when new, adjust manifest uid and write import_provenance_remote.json).
+Rationale: Enables consumption of published snapshots/canonical catalogs; foundation for later push/diff features.
+Dependencies: T14C IntegrityService, T14J remote listing (for UID resolution), manifest-v2 freeze (T14B).
+Preconditions: Remote configured; remote list shows target snapshot; local filesystem writable; IntegrityService available.
+Scope (In):
+ - CLI: remote pull <remote> <uid|prefix> [--uid-strategy=keep|new] [--force] [--progress] [--out-dir=<override>]
+ - UID resolution via listing (prefix unique match) or exact uid.
+ - Streaming download of each file in snaps/<uid>/ excluding transient objects; create temp dir then atomic rename.
+ - Integrity: If manifest-v2.json exists remotely, download it first, parse checksums, then for each file compute sha256 after download and compare. If only meta.json present, download files and compute checksums; generate new manifest-v2.json locally (mark provenance source="remote-meta-v1").
+ - uid-strategy=new: generate new uid, adjust manifest (uid only), write import_provenance_remote.json {original_uid, strategy, source_remote, original_manifest_sha256? (if available), imported_uid, imported_utc}.
+ - --force allows overwrite of existing snapshot when strategy=keep (else fail by default).
+ - Progress: simple stderr line per file (name, bytes) unless --json.
+ - JSON output: {action:"remote_pull", remote, uid, final_uid, files, bytes, verified, provenance_path?}.
+Scope (Out): push/upload, multipart parallelism, resumable partial downloads, encryption, caching, metrics.
 Implementation Steps:
- 1. Parse index; compute aggregates.
- 2. Age bucket classification based on created_utc.
- 3. Output to table or JSON if --json.
-Data Structures: Metrics summary object.
-File Targets: metrics command file.
-Testing & Validation: Adjust created timestamps to test buckets.
-Acceptance Criteria: Accurate counts; JSON matches table values.
-Edge Cases: No snapshots -> zeros.
-Rollback Strategy: Remove command file.
-Risks & Mitigations: Minimal.
-Follow-Up Tasks: Export metrics to external system (future).
-Time Estimate: XS.
-Deliverables: Metrics command.
+ 1. Implement RemotePullService (src/remote/remote_pull_service.php) with pull(RemoteConfig, uidOrPrefix, options)->Result.
+ 2. Add uid resolution helper using existing listing logic (fetch manifests list & match prefix).
+ 3. Download manifest-v2.json (if present) then iterate expected files list; else build file list by listing objects under snaps/<uid>/ and excluding manifest/meta.
+ 4. For each file: stream to temp path (use fopen with read/write chunk 64KB) computing sha256 via IntegrityService hashStream.
+ 5. Compare hashes (if manifest present). Accumulate size & file count.
+ 6. If manifest absent: after files downloaded compute metadata & write generated manifest-v2.json (schema_version=2) using existing structure + computed checksums; include provenance.remote_source_version=1.
+ 7. Apply uid strategy new (rename dir + modify manifest) + write import_provenance_remote.json.
+ 8. Atomic promote temp dir to snapshots/<final_uid> (fail if exists unless --force when keep).
+ 9. CLI command remote_pull.php delegates to service, handles JSON/text output & exit codes (hash mismatch -> non-zero).
+ 10. Tests: success path with manifest; path with meta-only; prefix ambiguous error; uid exists no --force error; uid-strategy=new provenance; checksum tamper (simulate by altering downloaded file after fetch to ensure detection? or mock remote returning wrong bytes) -> failure.
+Data Structures / Schemas:
+ - import_provenance_remote.json {original_uid, imported_uid, strategy, source_remote, original_manifest_sha256?, imported_utc, source_type:"manifest-v2"|"meta-v1"}.
+ - RemotePullResult (array) {success, original_uid, final_uid, files, bytes, verified, provenance_path?}.
+File Targets: src/cli/commands/remote_pull.php (new), src/remote/remote_pull_service.php (new), modify command_router.php, possibly extend remote listing helper, tests/Remote/RemotePull*.
+Testing & Validation: PHPUnit tests with fake_storage implementing list/get and controllable object contents; verify hash mismatch triggers failure; ensure new uid path produces provenance file; ensure force overwrites.
+Acceptance Criteria:
+ - remote pull downloads snapshot into local snapshots/<uid> or new uid when requested.
+ - Integrity verified when manifest present; mismatches abort and cleanup temp.
+ - meta-only remote snapshot yields synthesized manifest-v2.json locally.
+ - Provenance file written only on uid-strategy=new.
+ - No secret logging (inspect test output).
+ - Command JSON output matches spec.
+Edge Cases: Ambiguous prefix (error); missing snapshot (error); zero-byte file; manifest lists file absent remotely (error & abort); local dir already exists (error unless --force keep or new strategy different uid).
+Rollback Strategy: Revert commit.
+Risks & Mitigations: Large snapshots memory—use streaming; partial failure leaves temp dir—cleanup on exception.
+Follow-Up Tasks: Future push, differential sync.
+Time Estimate: M.
+Deliverables: RemotePullService, CLI command, tests, updated docs/remotes.md (add pull usage).
 Agent Execution Checklist:
- - [ ] Implement metrics compute
- - [ ] Test buckets
- - [ ] Commit
+ - [ ] Implement service
+ - [ ] Add CLI command & router entry
+ - [ ] Add tests (manifest, meta-only, new uid, force, mismatch, ambiguous)
+ - [ ] Update docs/remotes.md
+ - [ ] Run tests & commit (T14I feat(remote): pull snapshot)
 
--------------------------------------------------------------------
-T13.1 New README Structure
--------------------------------------------------------------------
-ID: T13.1
-Title: Rewrite README for New Architecture
-Project Name: Snappy (rewrite of prototype)
-Project Purpose: Snappy is a local-first developer tool to create, store, list, verify, and share database snapshots (initially SQL dumps) enriched with strong metadata and secure one-time sharing. Goals: simplicity, reliability, rich manifest metadata (Manifest v2), fast O(1) listing via indexes, optional compression, tagging & filtering, minimal retention, secure single-use sharing tokens, and maintainable modular architecture (Domain / Application / Infrastructure / CLI / Support). Backwards compatibility with the prototype is NOT required.
-Rewrite Note: Clean rewrite; breaking changes are acceptable and expected. No deprecation warnings or transitional alias layers; legacy command names will be replaced outright.
-Global Constraints: Plain PHP (>=8.1) with optional Composer. Avoid unnecessary complexity. Security focus ONLY on integrity and confidentiality of shared / one-time export artifacts (not local storage hardening). Policies beyond simple retention deferred.
-Context Recap: README outdated after new CLI & features.
-Objective: Provide authoritative README with Quick Start, Concepts, Commands, Sharing, Indexing, Tagging, Prune, Roadmap link.
-Rationale: Onboarding efficiency.
-Dependencies: CLI restructure (T5.*), sharing (T6.*) complete.
-Preconditions: Feature set stable.
-Scope (In): Overhaul README; highlight breaking changes acceptance.
-Scope (Out): Developer internals (architectural doc separate T13.2).
+====================================================================================================================
+T14J Snapshot List Remote Integration (Remote Enumeration in snapshot list)
+====================================================================================================================
+ID: T14J
+Title: snapshot list --remote (Enumerate Remote Snapshots via S3)
+Development Context Prompt (repeat for this ticket):
+Integrate remote listing into snapshot list command with minimal code. Use existing remote configs. Streaming list (paginate via batch fetch of object keys). No caching layer. Commit "T14J feat(remote): snapshot list integration". Keep diff small: reuse helper functions where possible; no speculative abstractions.
+Project Name: Snappy
+Project Purpose: (Universal Context)
+Rewrite Note: Separated from T14F to keep earlier remote config change small; this mirrors git’s incremental feature addition philosophy.
+Context Recap: Remote configurations exist (T14F). Need to allow developers to view snapshots stored in remote S3 buckets without local download.
+Objective: Extend snapshot list command with --remote <name> to list remote snapshots (uid, created, message first line, size if derivable) by scanning snaps/<uid>/manifest-v2.json or meta.json fallback.
+Rationale: Enables discovery of remotely published snapshots; essential for deciding which to pull (T14I) or share further.
+Dependencies: T14F (remote config), T14B (manifest freeze), T14C (IntegrityService not strictly required but available).
+Preconditions: At least one remote configured; remote bucket accessible; PHP has network access.
+Scope (In):
+ - Flag: snapshot list --remote <name> [--limit N] [--full]
+ - S3 listing: list objects with prefix snaps/ (cap *roughly* 20x limit then filter) to minimize requests.
+ - For each candidate directory (snaps/<uid>/): attempt to fetch manifest-v2.json first; fallback to meta.json.
+ - Extract fields: uid, created_utc (or created), message (first line unless --full then replace newlines with ' | '), snapshot_type, size_total_bytes (if available), optional tags (ignored in output for simplicity now).
+ - Output formatting consistent with local list; distinguish remote mode (e.g. add column REMOTE=remoteName or annotate in JSON).
+ - JSON output: {remote:"name", snapshots:[...]} preserving existing local schema plus remote.
+ - Error handling: remote not found -> usage error; network/list error -> non-zero with message; partial failures (corrupt manifest) skip entry with warning (unless all fail -> error).
+Scope (Out): Multi-remote aggregation, caching, parallel forks, progress display, colorization changes.
 Implementation Steps:
- 1. Sections: Tagline, Features list, Installation (Composer/manual), Quick Start commands, Snapshot Lifecycle, Manifest v2 explanation, Sharing workflow, Index & Filters, Compression, Tagging & Prune, Verify & Doctor, Roadmap link.
- 2. Remove references to legacy command names.
- 3. Add note on rewrite strategy (no deprecation).
-Data Structures: Markdown only.
-File Targets: README.md.
-Testing & Validation: Manual review; ensure all commands exist.
-Acceptance Criteria: README matches implemented features; no stale items.
-Edge Cases: None.
-Rollback Strategy: Revert file.
-Risks & Mitigations: Drift—update when features finalize.
-Follow-Up Tasks: Architecture and share guides.
+ 1. Modify snapshot_list command to parse --remote flag (mutually exclusive with local listing; if provided ignore local).
+ 2. Implement simple RemoteLister (src/remote/remote_lister.php) encapsulating listing & manifest/meta fetch logic returning normalized array.
+  2a. Normalization: {uid, created, type, message, size_bytes?}
+ 3. Inject RemoteLister into command (construct on demand to keep wiring simple).
+ 4. Add tests: RemoteListEmptyTest (no snapshots), RemoteListWithManifestsTest, RemoteListFallbackMetaTest (only meta.json), RemoteListCorruptManifestSkipsTest, RemoteListLimitTest.
+ 5. Update docs/remotes.md with usage examples.
+Data Structures: RemoteLister::list(RemoteConfig $cfg, int $limit, bool $full): array.
+File Targets: snapshot_list command file, src/remote/remote_lister.php (new), tests/Remote/RemoteListSnapshotsTest.php (and variants), docs/remotes.md.
+Testing & Validation: Fake S3 storage stub to supply objects & JSON bodies; ensure limit enforced; ensure message truncation vs full.
+Acceptance Criteria:
+ - snapshot list --remote <name> prints expected table / JSON.
+ - Limit respected; corrupted entries skipped with warning (still exit 0 if at least one good entry or zero legitimate snapshots). If all entries unreadable -> non-zero.
+ - No secret leakage (assert test output).
+ - Local listing behavior unchanged when --remote absent.
+Edge Cases: Empty bucket; manifest present but missing fields; meta.json missing message -> display empty; large message truncated properly.
+Rollback Strategy: Revert commit.
+Risks & Mitigations: Performance for huge buckets -> initial overscan factor; documented future caching.
+Follow-Up Tasks: T14I remote pull (download) leverages same normalization.
 Time Estimate: S.
-Deliverables: Updated README.
+Deliverables: Remote listing integration; tests; docs update.
 Agent Execution Checklist:
- - [ ] Draft new README
- - [ ] Validate references
- - [ ] Commit
+ - [ ] Implement RemoteLister
+ - [ ] Extend snapshot_list command
+ - [ ] Add tests (manifests, meta fallback, corrupt skip, limit)
+ - [ ] Update docs/remotes.md
+ - [ ] Run tests & commit (T14J feat(remote): snapshot list integration)
 
--------------------------------------------------------------------
-T13.2 Developer Guide
--------------------------------------------------------------------
-ID: T13.2
-Title: Architecture & Extension Guide
-Project Name: Snappy (rewrite of prototype)
-Project Purpose: Snappy is a local-first developer tool to create, store, list, verify, and share database snapshots (initially SQL dumps) enriched with strong metadata and secure one-time sharing. Goals: simplicity, reliability, rich manifest metadata (Manifest v2), fast O(1) listing via indexes, optional compression, tagging & filtering, minimal retention, secure single-use sharing tokens, and maintainable modular architecture (Domain / Application / Infrastructure / CLI / Support). Backwards compatibility with the prototype is NOT required.
-Rewrite Note: Clean rewrite; breaking changes are acceptable and expected. No deprecation warnings or transitional alias layers; legacy command names will be replaced outright.
-Global Constraints: Plain PHP (>=8.1) with optional Composer. Avoid unnecessary complexity. Security focus ONLY on integrity and confidentiality of shared / one-time export artifacts (not local storage hardening). Policies beyond simple retention deferred.
-Context Recap: Contributors need clarity on layers & extension points.
-Objective: docs/dev/architecture.md explaining Domain, Application, Infrastructure, CLI, Support layers and data flow.
-Rationale: Faster contributor onboarding; consistent design decisions.
-Dependencies: Manifest v2 in place.
-Preconditions: Core features implemented.
-Scope (In): Layer descriptions, class role examples, manifest anatomy, index flow, share token lifecycle diagram (ASCII acceptable).
-Scope (Out): API stability guarantees (not yet finalized).
-Implementation Steps:
- 1. Outline sections: Overview, Layer Responsibilities, Snapshot Lifecycle Sequence, Manifest v2 Fields, Index Update Flow, Share Token Lifecycle, Extension Points (DumpProvider, Storage, Compression, Encryption).
- 2. Provide ASCII diagram for snapshot create path.
-Data Structures: Markdown doc.
-File Targets: docs/dev/architecture.md.
-Testing & Validation: Spell-check optional.
-Acceptance Criteria: >= 500 words; all sections present.
-Edge Cases: None.
-Rollback Strategy: Remove file.
-Risks & Mitigations: Staleness—tie update to release checklist.
-Follow-Up Tasks: Add plugin guide later.
-Time Estimate: S.
-Deliverables: Architecture guide.
-Agent Execution Checklist:
- - [ ] Write guide
- - [ ] Commit
-
--------------------------------------------------------------------
-T13.3 User Guide for Sharing
--------------------------------------------------------------------
-ID: T13.3
-Title: Sharing & Encryption User Guide
-Project Name: Snappy (rewrite of prototype)
-Project Purpose: Snappy is a local-first developer tool to create, store, list, verify, and share database snapshots (initially SQL dumps) enriched with strong metadata and secure one-time sharing. Goals: simplicity, reliability, rich manifest metadata (Manifest v2), fast O(1) listing via indexes, optional compression, tagging & filtering, minimal retention, secure single-use sharing tokens, and maintainable modular architecture (Domain / Application / Infrastructure / CLI / Support). Backwards compatibility with the prototype is NOT required.
-Rewrite Note: Clean rewrite; breaking changes are acceptable and expected. No deprecation warnings or transitional alias layers; legacy command names will be replaced outright.
-Global Constraints: Plain PHP (>=8.1) with optional Composer. Avoid unnecessary complexity. Security focus ONLY on integrity and confidentiality of shared / one-time export artifacts (not local storage hardening). Policies beyond simple retention deferred.
-Context Recap: Users need explicit instructions for share tokens, archives, encryption.
-Objective: docs/share/guide.md with step-by-step usage scenarios.
-Rationale: Reduce misuse & clarify security boundaries.
-Dependencies: Sharing features (T6.*) and encryption (T7.1) implemented.
-Preconditions: Commands stable.
-Scope (In): Token creation, fetching, archive export, encryption, decryption, best practices.
-Scope (Out): Presigned remote specifics beyond example.
-Implementation Steps:
- 1. Provide scenarios: Basic share (token only), Archive share, Encrypted archive share, Presigned remote (if implemented).
- 2. Add SECURITY NOTES: token is secret; expiration semantics; passphrase strength.
-Data Structures: Markdown.
-File Targets: docs/share/guide.md.
-Testing & Validation: Manually follow steps ensure they work.
-Acceptance Criteria: Clear, accurate workflow examples.
-Edge Cases: None.
-Rollback Strategy: Remove guide.
-Risks & Mitigations: Feature drift—update with each share enhancement.
-Follow-Up Tasks: Possibly add FAQ.
-Time Estimate: XS.
-Deliverables: Share guide.
-Agent Execution Checklist:
- - [ ] Draft guide
- - [ ] Validate steps
- - [ ] Commit
-
--------------------------------------------------------------------
-T11.1/T11.2 Already Provided (Cross-reference)
--------------------------------------------------------------------
-(See above for full details; included earlier—no duplication necessary.)
-
--------------------------------------------------------------------
-T12.*, T13.* Already Provided (Cross-reference)
--------------------------------------------------------------------
-(See above for full details; included earlier—no duplication necessary.)
-
--------------------------------------------------------------------
+====================================================================================================================
 Backlog / Stretch (Concept Summaries, Not Formal Tickets)
--------------------------------------------------------------------
-Incremental Snapshots: Add base_uid and delta artifacts referencing DB logs for partial restore.
-Streaming Restore: Pipe decompressed dump directly to DB import command without full disk write.
-Multi-Artifact Snapshots: Support ancillary directories (e.g., files/, config/) enumerated in manifest files array.
-Anonymization Transforms: Transformation pipeline pre-write (PII scrubbing) with manifest record of applied transforms.
-REST Wrapper & Web UI: HTTP service exposing snapshot list/pull/share with authentication layer.
-zstd Compression: Additional compression provider with ratio & speed metrics in manifest.
-BLAKE3 Checksums: Optionally faster hashing algorithm; record algo field in manifest checksums.
-Multipart Parallel S3 Upload: Performance improvement for large (>64MB) artifacts.
-
-END OF FULL TICKET SPECIFICATIONS
-
+====================================================================================================================
+ - Remote push/pull synchronization (authenticated upload)
+ - Optional artifact signing (public key) post stable adoption
+ - Differential snapshot export (binary diff) for large datasets
+ - Catalog indexing service (external) consuming remote listing output
+ - Encryption at rest for artifact on disk
+ - QR code output for share create
+ - Parallel multi-remote snapshot listing with caching
