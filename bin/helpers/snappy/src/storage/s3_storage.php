@@ -7,6 +7,7 @@ use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
 use InvalidArgumentException;
 use Snappy\Support\Exception\RemoteException;
+use Snappy\Snapshot\integrity_service;
 
 class s3_storage implements storage {
     private string $endpoint;
@@ -17,6 +18,7 @@ class s3_storage implements storage {
     private bool $debug;
     private bool $path_style;
     private bool $auto_path_style;
+    private ?integrity_service $integrity = null;
 
     public function __construct(array $config = []) {
         $this->endpoint = rtrim($config['endpoint'] ?? '', '/');
@@ -312,7 +314,7 @@ class s3_storage implements storage {
 
     private function stream_put(string $key, string $filepath): string {
         $size = filesize($filepath);
-        $payload_hash = hash_file('sha256', $filepath);
+        $payload_hash = $this->integrity()->hashFile($filepath);
         $content_type = $this->guess_mime($filepath);
         [$scheme, $host, $uri] = $this->build_host_uri($key);
         $amz = gmdate('Ymd\\THis\\Z');
@@ -413,4 +415,6 @@ class s3_storage implements storage {
         $url = $scheme . '://' . $host . $uri . '?' . $canonical_query_str . '&X-Amz-Signature=' . $signature;
         return $url;
     }
+
+    private function integrity(): integrity_service { return $this->integrity ??= new integrity_service(); }
 }
