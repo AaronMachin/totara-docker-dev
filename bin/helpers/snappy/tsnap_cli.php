@@ -39,6 +39,7 @@ $router->register('snapshot','create', new Snappy\Cli\Commands\snapshot_create()
 $router->register('snapshot','list',   new Snappy\Cli\Commands\snapshot_list());
 $router->register('snapshot','show',   new Snappy\Cli\Commands\snapshot_show());
 $router->register('snapshot','metrics',new Snappy\Cli\Commands\snapshot_metrics());
+$router->register('snapshot','export', new Snappy\Cli\Commands\snapshot_export());
 
 // Maintenance (gc) + Config + Remote
 $router->register('gc','objects',  new Snappy\Cli\Commands\gc_objects());
