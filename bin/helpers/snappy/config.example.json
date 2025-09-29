@@ -23,6 +23,7 @@
     "create": "snapshot.create",
     "list": "snapshot.list",
     "show": "snapshot.show",
-    "delete": "snapshot.delete"
+    "delete": "snapshot.delete",
+    "share": "share.create"
   }
 }
