@@ -1,9 +1,0 @@
-Create a snapshot
-
-Usage: tsnap snap [-m <message>] [--type=sql] [--compress] [--keep-failed]\nCreates a snapshot. If -m omitted an editor will open.
-
-Examples:
-  tsnap snap -m "initial load"
-  tsnap snap --type=sql -m "before upgrade"
-  tsnap snap --compress -m "compressed snapshot"
-  tsnap snap --keep-failed -m "investigate failing dump"

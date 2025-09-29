@@ -21,15 +21,14 @@ final class HelpMetadataTest extends AbstractCliTestCase {
         $map = [];
         foreach ($commands as $entry) { $map[$entry['name']] = $entry; }
         // Ensure a few representative commands exist
-        foreach (['snapshot.create','snapshot.list','share.create','remote.add','verify.run','config.get','prune.run'] as $required) {
+        foreach (['snapshot.create','snapshot.list','remote.add','gc.objects','config.get'] as $required) {
             $this->assertArrayHasKey($required, $map, "missing command metadata for $required");
             $this->assertNotEmpty($map[$required]['examples'], "$required should have examples");
             $this->assertNotEmpty($map[$required]['group'], "$required should have a group");
         }
         // Group expectations
         $this->assertSame('Snapshot', $map['snapshot.create']['group']);
-        $this->assertSame('Share', $map['share.create']['group']);
-        $this->assertSame('Maintenance', $map['remote.add']['group']);
+        $this->assertSame('Remote', $map['remote.add']['group']);
         $this->assertSame('Config', $map['config.get']['group']);
     }
 
@@ -37,10 +36,9 @@ final class HelpMetadataTest extends AbstractCliTestCase {
         $out = $this->runCli('help', $code);
         $this->assertSame(0, $code);
         $this->assertStringContainsString('[Snapshot]', $out);
-        $this->assertStringContainsString('[Share]', $out);
+        $this->assertStringContainsString('[Remote]', $out);
         $this->assertStringContainsString('[Maintenance]', $out);
         $this->assertStringContainsString('[Config]', $out);
         $this->assertStringContainsString('snapshot create', $out);
     }
 }
-

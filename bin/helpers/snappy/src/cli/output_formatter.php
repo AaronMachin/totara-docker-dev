@@ -70,8 +70,7 @@ class output_formatter {
 
     public function error(string $msg, int $code): void {
         if ($this->jsonMode) { $this->errors[] = ['code'=>$code,'message'=>$msg]; return; }
-        // Suppress test errors only when env flag set AND not in quiet mode (quiet mode should still display errors per tests)
-        if (getenv('SNAPPY_SUPPRESS_TEST_ERRORS') && !$this->quiet) { return; }
+        // Always emit error lines (baseline trimmed: no test suppression heuristic)
         fwrite(STDERR, 'ERROR(' . $code . '): ' . $msg . "\n");
     }
 

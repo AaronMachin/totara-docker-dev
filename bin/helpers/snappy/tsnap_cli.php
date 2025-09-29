@@ -1,6 +1,6 @@
 <?php
 /**
- * Snappy hierarchical CLI entrypoint (trim in progress: share/remote commands unregistered; underlying remote code still present until fully removed in T13A follow-up edits).
+ * Snappy CLI baseline (T14A) - trimmed: removed legacy share/verify/doctor/prune/tag/hash-store/push/pull.
  */
 
 $composerAutoload = __DIR__ . '/vendor/autoload.php';
@@ -14,9 +14,7 @@ if (file_exists($composerAutoload)) {
 use Snappy\Cli\context;
 use Snappy\Snapshot\snapshot_manager;
 use Snappy\Snapshot\remote_registry;
-use Snappy\Snapshot\remote_snapshot_cache;
 use Snappy\Snapshot\index_manager;
-use Snappy\Snapshot\remote_index_manager;
 use Snappy\Cli\command_router;
 use Snappy\Cli\output_formatter;
 use Snappy\Config\config_manager;
@@ -32,26 +30,23 @@ $snapshotBase = ($b = getenv('SNAPPY_SNAPSHOT_BASE')) ? $b : $config->get('optio
 
 $remoteRegistry = new remote_registry($config, $snapshotBase);
 $manager = new snapshot_manager($remoteRegistry);
-$cache = new remote_snapshot_cache($snapshotBase); $manager->set_cache($cache);
 $index = new index_manager($snapshotBase); $manager->set_index($index);
-$remoteIndex = new remote_index_manager($remoteRegistry); $manager->set_remote_index($remoteIndex);
 
 $router = new command_router();
 
-// Snapshot commands (retain minimal surface)
+// Snapshot commands
 $router->register('snapshot','create', new Snappy\Cli\Commands\snapshot_create());
 $router->register('snapshot','list',   new Snappy\Cli\Commands\snapshot_list());
 $router->register('snapshot','show',   new Snappy\Cli\Commands\snapshot_show());
-$router->register('snapshot','tag',    new Snappy\Cli\Commands\snapshot_tag());
 $router->register('snapshot','metrics',new Snappy\Cli\Commands\snapshot_metrics());
 
-// Prune / Verify / GC / Doctor / Config
-$router->register('prune','run',   new Snappy\Cli\Commands\prune_run());
-$router->register('verify','run',  new Snappy\Cli\Commands\verify_run());
+// Maintenance (gc) + Config + Remote
 $router->register('gc','objects',  new Snappy\Cli\Commands\gc_objects());
-$router->register('doctor','run',  new Snappy\Cli\Commands\doctor_run());
 $router->register('config','get',  new Snappy\Cli\Commands\config_get());
 $router->register('config','set',  new Snappy\Cli\Commands\config_set());
+$router->register('remote','add',  new Snappy\Cli\Commands\remote_add());
+$router->register('remote','list', new Snappy\Cli\Commands\remote_list());
+$router->register('remote','remove', new Snappy\Cli\Commands\remote_remove());
 
 array_shift($argv); // remove script name
 
@@ -65,7 +60,7 @@ foreach ($argv as $a) {
 }
 $argv=$filtered; if ($noColor) { color::disable(); }
 $out = new output_formatter($jsonMode,$quiet);
-$ctx = new context($config, $remoteRegistry, $manager, $cache, $index, $remoteIndex, $out);
+$ctx = new context($config, $remoteRegistry, $manager, $index, $out);
 
 try {
     $exit = $router->route($argv, $ctx);

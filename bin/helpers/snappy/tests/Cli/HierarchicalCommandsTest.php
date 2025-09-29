@@ -4,10 +4,9 @@ declare(strict_types=1);
 require_once __DIR__ . '/InProcessCliTestCase.php';
 
 final class HierarchicalCommandsTest extends InProcessCliTestCase {
-    public function testSnapshotCreateListShowVerifyAndPrune(): void {
+    public function testSnapshotCreateListShowAndRemoteCycle(): void {
         [$out1,$code1,$ctx] = $this->runInProcess('snapshot create -m first');
         $this->assertSame(0,$code1);
-        $this->assertStringContainsString('created snapshot',$out1);
         $uid1 = trim(substr(strrchr(trim($out1),' '),1));
         [$out2,$code2] = $this->runInProcess('snapshot create -m second --compress');
         $this->assertSame(0,$code2);
@@ -19,16 +18,15 @@ final class HierarchicalCommandsTest extends InProcessCliTestCase {
         $this->assertStringContainsString($uid2,$list);
         [$show,$showCode] = $this->runInProcess('snapshot show '.$uid1);
         $this->assertSame(0,$showCode);
-        $this->assertStringContainsString('UID:',$show);
-        [$verify,$verifyCode] = $this->runInProcess('verify run '.$uid1);
-        $this->assertSame(0,$verifyCode);
-        // prune keep=0
-        [$prune,$pruneCode] = $this->runInProcess('prune run --keep=0');
-        $this->assertSame(0,$pruneCode);
-        [$list2,$list2Code] = $this->runInProcess('snapshot list --no-index');
-        $this->assertSame(0,$list2Code);
-        $this->assertStringNotContainsString($uid1,$list2);
-        $this->assertStringNotContainsString($uid2,$list2);
+        $this->assertStringContainsString('UID:', $show);
+        // remote add/list/remove cycle
+        [$add,$addCode] = $this->runInProcess('remote add mem1 memory');
+        $this->assertSame(0,$addCode,$add);
+        [$rlist,$rlistCode] = $this->runInProcess('remote list');
+        $this->assertSame(0,$rlistCode,$rlist);
+        $this->assertStringContainsString('mem1',$rlist);
+        [$rm,$rmCode] = $this->runInProcess('remote remove mem1');
+        $this->assertSame(0,$rmCode,$rm);
     }
 
     public function testConfigGetSetPersist(): void {

@@ -5,9 +5,7 @@ use PHPUnit\Framework\TestCase;
 use Snappy\Config\config_manager;
 use Snappy\Snapshot\remote_registry;
 use Snappy\Snapshot\snapshot_manager;
-use Snappy\Snapshot\remote_snapshot_cache;
 use Snappy\Snapshot\index_manager;
-use Snappy\Snapshot\remote_index_manager;
 use Snappy\Cli\context;
 use Snappy\Cli\command_router;
 
@@ -36,40 +34,23 @@ abstract class InProcessCliTestCase extends TestCase {
         @mkdir($snapshotBase, 0777, true);
         $registry = new remote_registry($cfg, $snapshotBase);
         $manager = new snapshot_manager($registry);
-        $cache = new remote_snapshot_cache($snapshotBase); $manager->set_cache($cache);
         $index = new index_manager($snapshotBase); $manager->set_index($index);
-        $remoteIdx = new remote_index_manager($registry); $manager->set_remote_index($remoteIdx);
-        $this->sharedCtx = new context($cfg, $registry, $manager, $cache, $index, $remoteIdx);
+        $this->sharedCtx = new context($cfg, $registry, $manager, $index);
         return $this->sharedCtx;
     }
 
     protected function buildRouter(): command_router {
-        // Fallback require for command classes if autoloader missed them (CI edge cases)
         $cmdDir = __DIR__ . '/../../src/cli/commands';
-        $needed = ['snapshot_create','snapshot_list','snapshot_show','snapshot_tag','snapshot_metrics','share_create','share_list','share_fetch','prune_run','verify_run','gc_objects','config_get','config_set','remote_list','remote_add','remote_remove','doctor_run'];
-        foreach ($needed as $n) {
-            $fq = 'Snappy\\Cli\\Commands\\' . $n;
-            if (!class_exists($fq)) {
-                $file = $cmdDir . '/' . $n . '.php';
-                if (is_file($file)) { require_once $file; }
-            }
-        }
+        $needed = ['snapshot_create','snapshot_list','snapshot_show','snapshot_metrics','gc_objects','config_get','config_set','remote_list','remote_add','remote_remove'];
+        foreach ($needed as $n) { $fq = 'Snappy\\Cli\\Commands\\' . $n; if (!class_exists($fq)) { $file = $cmdDir . '/' . $n . '.php'; if (is_file($file)) { require_once $file; } } }
         $router = new command_router();
         $router->register('snapshot','create', new Snappy\Cli\Commands\snapshot_create());
         $router->register('snapshot','list',   new Snappy\Cli\Commands\snapshot_list());
         $router->register('snapshot','show',   new Snappy\Cli\Commands\snapshot_show());
-        $router->register('snapshot','tag',    new Snappy\Cli\Commands\snapshot_tag());
         $router->register('snapshot','metrics', new Snappy\Cli\Commands\snapshot_metrics());
-        $router->register('share','create', new Snappy\Cli\Commands\share_create());
-        $router->register('share','list',   new Snappy\Cli\Commands\share_list());
-        $router->register('share','fetch',  new Snappy\Cli\Commands\share_fetch());
-        $router->register('prune','run',    new Snappy\Cli\Commands\prune_run());
-        $router->register('verify','run',   new Snappy\Cli\Commands\verify_run());
         $router->register('gc','objects',  new Snappy\Cli\Commands\gc_objects());
-        $router->register('doctor','run',  new Snappy\Cli\Commands\doctor_run());
         $router->register('config','get',   new Snappy\Cli\Commands\config_get());
         $router->register('config','set',   new Snappy\Cli\Commands\config_set());
-        // remote commands
         $router->register('remote','list',  new Snappy\Cli\Commands\remote_list());
         $router->register('remote','add',   new Snappy\Cli\Commands\remote_add());
         $router->register('remote','remove',new Snappy\Cli\Commands\remote_remove());

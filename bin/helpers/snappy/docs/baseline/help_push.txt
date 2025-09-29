@@ -1,9 +1,0 @@
-Push a local snapshot to a remote: push <uid|prefix> [remote]
-
-Usage: tsnap push <uid|prefix> [remote]
-Push a resolved local snapshot to the specified remote (defaults to first configured non-local remote).
-
-Examples:
-  tsnap push a1b2c3 origin
-  tsnap push latestprod backup
-

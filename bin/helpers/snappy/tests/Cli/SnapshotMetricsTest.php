@@ -27,15 +27,11 @@ final class SnapshotMetricsTest extends AbstractCliTestCase {
         $this->assertEquals(['lt_1d'=>0,'d1_7'=>0,'d8_30'=>0,'gt_30d'=>0], $payload['age_buckets']);
     }
 
-    public function testAgeBucketsAndTags(): void {
+    public function testAgeBuckets(): void {
         $uid1 = $this->createSnapshot('s1'); // will become <1d
         $uid2 = $this->createSnapshot('s2'); // 2d
         $uid3 = $this->createSnapshot('s3'); // 15d
         $uid4 = $this->createSnapshot('s4'); // 45d
-        // Tag some snapshots
-        $this->runCli('snapshot tag ' . $uid1 . ' add alpha');
-        $this->runCli('snapshot tag ' . $uid2 . ' add alpha');
-        $this->runCli('snapshot tag ' . $uid3 . ' add beta');
         // Determine snapshot parent/root (tmpRoot parent contains /snaps directory)
         $snapParent = $this->tmpRoot; // AbstractCliTestCase sets snapshots under $tmpRoot/snaps
         $snapDir = $snapParent . '/snaps';
@@ -67,10 +63,5 @@ final class SnapshotMetricsTest extends AbstractCliTestCase {
         $this->assertSame(1, $ages['d1_7']);
         $this->assertSame(1, $ages['d8_30']);
         $this->assertSame(1, $ages['gt_30d']);
-        $tags = $payload['tags'];
-        $this->assertArrayHasKey('alpha', $tags);
-        $this->assertArrayHasKey('beta', $tags);
-        $this->assertSame(2, $tags['alpha']);
-        $this->assertSame(1, $tags['beta']);
     }
 }

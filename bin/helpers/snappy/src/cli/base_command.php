@@ -32,8 +32,9 @@ abstract class base_command implements command {
         return match($prefix) {
             'snapshot' => 'Snapshot',
             'share' => 'Share',
+            'remote' => 'Remote',
             'config' => 'Config',
-            'prune', 'verify', 'remote', 'doctor', 'gc' => 'Maintenance',
+            'prune', 'verify', 'doctor', 'gc' => 'Maintenance',
             default => 'Other'
         };
     }

@@ -1,218 +1,91 @@
-Snappy Snapshot Service
-=======================
+Snappy (T14A Baseline)
+========================
 
 Overview
 --------
-Snappy is a lightweight, git‑inspired snapshot manager for developer databases (more asset types later). It provides:
+Snappy is a lean, local‑first snapshot tool for developer databases. The T14A baseline deliberately trims legacy surface area (push/pull, verify, doctor, share tokens, tag, hash store, remote indexing) to prepare for a deterministic tar.gz artifact export/import pipeline implemented in later tickets.
 
-- Create local snapshots with a message (snap = commit analogue).
-- Push snapshots to one or more remotes (S3 / compatible) for sharing.
-- Pull snapshots from remotes back into local storage.
-- Simple pluggable storage interface (local filesystem, S3 implementation included).
-- Per‑file SHA256 integrity verification before push and after pull.
-- Git‑like multi‑remote management (remote add / list / remove).
+Current Supported Commands
+--------------------------
+(snapshot.*)
+- snapshot create   Create a local SQL snapshot (optional --compress)
+- snapshot list     List local snapshots (UID, created, type, first message line)
+- snapshot show     Show manifest details for a snapshot
+- snapshot metrics  Aggregate counts & basic age buckets (derived from local index)
 
-Key Principles
---------------
-1. Familiar mental model: snap -> push / pull (like commit -> push / pull).
-2. Zero external PHP dependencies (pure PHP + curl).
-3. Deterministic, inspectable on‑disk layout.
-4. Clear, minimal command surface; only persistent state is config.json + snapshot files.
-5. Extensible storage & snapshot types without large refactors.
+(remote.*)
+- remote add <name> s3 --endpoint= --bucket= --region= --key= --secret= [--path-style]
+- remote list
+- remote remove <name>
+(Remote entries are configuration only in T14A: no network listing, pull, or push yet.)
 
-Directory Layout
-----------------
-```
-bin/helpers/snappy/
-  tsnap_cli.php              (CLI front controller / dynamic command loader)
-  snappy_autoload.php        (simple lowercase path autoloader)
-  src/
-    cli/
-      command.php            (command interface)
-      context.php            (registry + manager wiring)
-      snap.php               (create snapshot)
-      push.php               (push snapshot to remote)
-      pull.php               (pull snapshot from remote)
-      listing.php            (list snapshots on a remote or all)
-      remote.php             (manage remotes & reload config)
-      cat.php                (dump object contents)
-      get.php                (download single object)
-      fetch.php              (compat stub: forces a list scan on a remote)
-      help.php               (dynamic help)
-    snapshot/
-      snapshot_manager.php   (create, list, push, pull, resolve)
-      remote_registry.php    (multi‑remote registry + config.json persistence)
-    storage/
-      storage.php            (storage interface)
-      local_storage.php      (filesystem implementation)
-      s3_storage.php         (S3 / MinIO via SigV4)
-    util/
-      snapshot_uid.php       (UID generation and resolution)
-      editor.php             (message acquisition)
-      time.php               (time helpers)
-      env.php                (future expansion)
-```
+(maintenance)
+- gc objects (trimmed soon; kept minimal) – subject to future refinement
+- config get / config set – read & persist configuration values
 
-Local Snapshot Layout
----------------------
-Local snapshots live under a unified base directory:
-```
-$SNAPPY_SNAPSHOT_ROOT/snaps/<uid>/meta.json
-$SNAPPY_SNAPSHOT_ROOT/snaps/<uid>/backup.sql   (type=sql)
-```
-Default base path: $HOME/.snappy
+Artifact (Forward Spec)
+-----------------------
+Export/import/share features are deferred; the artifact spec is documented in docs/artifact_spec.md. Snapshot directories already contain manifest-v2.json (schema_version=2) written deterministically (field ordering not yet canonicalized – T14B+T14C address canonical hashing).
 
-Remote Layout
+Local Layout
+------------
+$SNAPPY_SNAPSHOT_BASE/
+  snaps/<uid>/manifest-v2.json
+  snaps/<uid>/meta.json (legacy, still written for transition – slated for removal after importer/exporter stabilize)
+  snaps/<uid>/backup.sql[.gz]
+  snaps/index.json (summary index, auto-maintained)
+
+Configuration
 -------------
-```
-snaps/<uid>/meta.json
-snaps/<uid>/<files...>
-```
+Configuration file: config.json at the chosen base (SNAPPY_CONFIG_FILE or default under tool directory for embedded usage). Remote configs stored under remotes:{ name: { type:"s3", config:{endpoint,bucket,region,key,secret,path_style?} } } plus the reserved remotes.local entry.
+Secrets are never printed; remote list redacts credentials (currently key/secret retained internally but may be further redacted in later tickets).
 
-Configuration File
-------------------
-Primary config state (remotes + options) stored at:
-```
-$SNAPPY_SNAPSHOT_ROOT/.snappy/config.json
-```
-Example config.json snippet:
-```
-{
-  "version": 1,
-  "remotes": {
-    "local": {"type":"local","path":"/home/user/.snappy","created":"..."},
-    "origin": {"type":"s3","config":{"endpoint":"https://s3.example","bucket":"mybucket","region":"us-east-1","key":"...","secret":"..."},"created":"..."}
-  },
-  "options": {"default_remote": "local"},
-  "updated": "..."
-}
-```
-Edit config.json manually then run:
-```
-snappy remote reload
-```
+Planned (Deferred) Features (See docs/deferred.md)
+-------------------------------------------------
+- Deterministic streaming export to <uid>.tar.gz (T14D)
+- Streaming import with uid strategy (T14E)
+- Remote snapshot enumeration (T14J)
+- Ephemeral peer share (T14G)
+- IntegrityService central hashing (T14C)
+- Manifest canonical hash freeze (T14B)
+
+Why Trim First?
+---------------
+Eliminating unused legacy commands reduces risk while refocusing on a narrow, composable pipeline: create → manifest → (future) export → import → share / remote pull.
+
+Quick Start
+-----------
+Create a snapshot:
+  tsnap snapshot create -m "initial load"
+List snapshots:
+  tsnap snapshot list
+Show details:
+  tsnap snapshot show <uid>
+Add remote config:
+  tsnap remote add prod s3 --endpoint=https://s3.example.com --bucket=mybucket --region=us-east-1 --key=AKIA... --secret=SECRET
+List remotes:
+  tsnap remote list
+Remove remote:
+  tsnap remote remove prod
 
 Environment Variables
 ---------------------
-(Only needed if not supplied when adding a remote.)
-- SNAPPY_SNAPSHOT_ROOT   Base path (default: $HOME/.snappy)
-- SNAPPY_TDB_BACKUP_PATH Path where `tdb backup <uid>` writes dumps (default: $HOME/tdb_backups)
-- SNAPPY_DEBUG           1/true enables verbose S3 logging
+SNAPPY_SNAPSHOT_BASE  Override snapshot root (default internal path / user home future)
+SNAPPY_CONFIG_FILE    Override config file path
+SNAPPY_PROVISIONAL_BASE  Seed path for initial config/structure
+SNAPPY_FAKE_DUMP      Test hook enabling fake dump provider
 
-Commands
---------
-- snap        Create a local snapshot (currently type=sql)
-- push        Push snapshot (full UID or unique prefix) to a remote: push <uid|prefix> [remote]
-- pull        Pull snapshot from a remote into local: pull <uid|prefix> <remote> [--force]
-- list        List snapshots (default local). Options: --remote=<name> --all --limit=N --full
-- remote      Manage remotes: add/list/remove/reload
-- cat         Output raw object from a remote (--remote=, default local)
-- get         Download remote object to file (--remote=, --output=)
-- fetch       Force listing scan (legacy convenience; returns count)
-- help        Display dynamic command help
+Security Notes
+--------------
+- Do not commit real credentials. Secrets stored in config.json are not logged.
+- No encryption/signing yet (explicitly out of scope for baseline).
 
-Remote Management Examples
---------------------------
-Add an S3 remote:
-```
-snappy remote add origin s3 \
-  --endpoint=https://s3.example \
-  --bucket=mybucket \
-  --region=us-east-1 \
-  --key=AKIA... \
-  --secret=SECRET \
-  --path-style
-```
-Manual edit + reload:
-```
-vi $SNAPPY_SNAPSHOT_ROOT/.snappy/config.json
-snappy remote reload
-```
-Remove remote:
-```
-snappy remote remove origin
-```
-
-Typical Workflow
-----------------
-```
-snappy snap -m "before upgrade"
-snappy push <uid-prefix> origin
-snappy pull <uid-prefix> origin
-```
-
-Meta Format (meta.json)
------------------------
-```
-{
-  "uid": "<string>",
-  "created": "ISO-8601",
-  "type": "sql",
-  "message": "<user message>",
-  "files": ["backup.sql"],
-  "file_checksums": {"backup.sql": "<sha256>"}
-}
-```
-
-Integrity
----------
-- push: validates local file checksums before upload.
-- pull: validates downloaded files against meta checksums.
-
-Local & Remote Summary Indexes (T4.2)
--------------------------------------
-Snappy maintains compact JSON summary indexes to provide O(1) listings without scanning object stores:
-
-- Local index: snaps/index.json (version 1) updated automatically on snapshot creation or rebuild. Contains an array of snapshot summary rows (uid, created_utc, first message line, tags, size, compression flag, file count, optional type).
-- Remote index: snaps/index.json (same schema) uploaded/updated on each push (last write wins). This avoids expensive remote prefix scans during listing.
-
-Listing Behavior:
-- list local (default) uses local index fast-path unless --no-index or --full requested (full requires full message which may include newlines not stored verbatim in the index).
-- list --remote=<r> uses (in order): remote snapshot cache (if fresh), else remote index (if present), else falls back to on-demand meta.json scan.
-- Corrupt or missing indexes trigger fallback scanning; subsequent push recreates remote index; local corrupt index triggers auto rebuild.
-
-Failure & Consistency Notes:
-- Remote index updates are best-effort; partial/failed writes do not block push completion.
-- Concurrent pushes may race; last writer wins; no merge strategy (acceptable per design scope).
-- If a snapshot is later deleted server-side, the remote index may contain stale entries until the next push or a future maintenance command (future task).
-
-Memory / In-Memory Test Remote:
-- A lightweight in-process 'memory' remote type backed by fake_storage exists for unit tests only; not intended for production usage. It enables fast verification of remote index logic without external services.
-
-Commands Impacted:
-- push: now appends/updates remote summary index after object uploads.
-- list: adds remote index fast-path.
-
-Schema Stability:
-- Index schema version is 1; changes require bump + backward handling; current implementation treats unknown/invalid content as trigger to rebuild (local) or fallback (remote).
-
-Extending Index Content:
-- Additional fields (e.g. tags, custom metadata) can be added in future versions; keep entries small to preserve fast transfer and low memory overhead.
-
-Extending Snapshot Types
-------------------------
-Add branch in snapshot_manager::create() and produce files + checksums before write_meta().
-
-Testing (Planned)
------------------
-- UID prefix resolution
-- push / pull round‑trip + checksum verification
-- remote add validation
-- list performance
-
-Roadmap
--------
-Short term:
-- Compression/encryption opt‑in
-- Prune / GC utility
-
-Medium term:
-- Parallel uploads (multipart)
-- Additional storage backends (Azure Blob, GCS)
-
-Long term:
-- Incremental / differential snapshots
-- Content‑addressable dedupe
+Documentation
+-------------
+- Artifact Spec: docs/artifact_spec.md
+- Deferred / Removed Legacy Surface: docs/deferred.md
+- Remote Config: docs/remotes.md
+- Refactor Notes (files removed & LOC delta): docs/refactor_notes.md
 
 License
 -------

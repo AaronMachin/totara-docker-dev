@@ -27,6 +27,7 @@ If a ticket asks for follow-up, isolate each commit per ticket ID.
 If unsure about a detail: infer from existing conventions (snapshot_manager, index_manager) rather than asking. Only ask if truly blocking.
 Always produce value each response (plan, diff, test run, or commit).
 Always double check your work, both in running tests AND in thinking it through before committing.
+WHEN RUNNING COMMANDS CHECK THE CWD
 End of handover prompt.
 
 Ticket Format Legend

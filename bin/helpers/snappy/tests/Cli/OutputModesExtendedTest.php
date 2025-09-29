@@ -34,29 +34,6 @@ final class OutputModesExtendedTest extends AbstractCliTestCase {
         $this->assertNotEmpty($d['errors']);
     }
 
-    public function testVerifyJson(): void {
-        $create = $this->runCli('--json snapshot create -m verifyjson');
-        $c = json_decode($create, true);
-        $uid = $c['data']['payload']['uid'];
-        $verify = $this->runCli('--json verify run ' . $uid);
-        $d = json_decode($verify, true);
-        $this->assertSame('verify.run', $d['command']);
-        $this->assertSame('ok', $d['status']);
-        $this->assertSame('ok', $d['data']['payload']['status']);
-    }
-
-    public function testPruneJson(): void {
-        $this->runCli('snapshot create -m prune1');
-        $this->runCli('snapshot create -m prune2');
-        $out = $this->runCli('--json prune run --keep=0');
-        $d = json_decode($out, true);
-        $this->assertSame('prune.run', $d['command']);
-        $this->assertSame('ok', $d['status']);
-        $p = $d['data']['payload'];
-        $this->assertSame(0, $p['kept']);
-        $this->assertGreaterThanOrEqual(2, $p['deleted']);
-    }
-
     public function testConfigSetGetJson(): void {
         $set = $this->runCli('--json config set options.test.flag true --persist');
         $d = json_decode($set, true);
@@ -80,13 +57,6 @@ final class OutputModesExtendedTest extends AbstractCliTestCase {
         $out = $this->runCli('--quiet snapshot create -m quietcreate', $code);
         $this->assertSame(0, $code);
         $this->assertStringNotContainsString('created snapshot', $out);
-    }
-
-    public function testQuietSuppressesPrune(): void {
-        $this->runCli('snapshot create -m qprune1');
-        $out = $this->runCli('--quiet prune run --keep=1', $code);
-        $this->assertSame(0, $code);
-        $this->assertSame('', trim($out), 'prune summary should be suppressed');
     }
 
     public function testRemoteAddListRemoveJson(): void {

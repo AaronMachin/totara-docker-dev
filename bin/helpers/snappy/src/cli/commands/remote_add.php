@@ -6,11 +6,11 @@ use Snappy\Cli\context;
 
 class remote_add extends base_command {
     public function name(): string { return 'remote.add'; }
-    public function description(): string { return 'Add a snapshot remote (currently supports local/s3)'; }
+    public function description(): string { return 'Add a snapshot remote (supports memory/s3)'; }
     public function usage(): string { return 'Usage: tsnap remote add <name> <type> [--endpoint=URL --bucket=NAME --region=REG --key=K --secret=S --path-style]'; }
     public function examples(): array { return [
         'tsnap remote add prod s3 --endpoint=https://s3.example.com --bucket=mybucket',
-        'tsnap remote add staging local',
+        'tsnap remote add mem1 memory',
     ]; }
 
     public function run(array $args, context $ctx): int {
@@ -29,7 +29,10 @@ class remote_add extends base_command {
         }
         $ctx->registry->add($name,$type,$config); // may throw mapped exceptions upstream
         $ctx->out->info("added remote $name ($type)");
-        $ctx->out->json(['action'=>'add','name'=>$name,'type'=>$type,'config'=>$config]);
+        $safe = $config;
+        if (isset($safe['key'])) { $safe['key'] = 'REDACTED'; }
+        if (isset($safe['secret'])) { $safe['secret'] = 'REDACTED'; }
+        $ctx->out->json(['action'=>'add','name'=>$name,'type'=>$type,'config'=>$safe]);
         return 0;
     }
 }
