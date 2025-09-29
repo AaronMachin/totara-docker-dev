@@ -69,9 +69,11 @@ class config_manager {
         $payload = $this->raw;
         $payload['updated'] = date('c');
         $json = json_encode($payload, JSON_PRETTY_PRINT);
-        if (@file_put_contents($this->file, $json) === false) {
-            throw new ConfigException('Failed to write config file: '.$this->file);
-        }
+        $dir = dirname($this->file);
+        if (!is_dir($dir)) { @mkdir($dir, 0777, true); }
+        $tmp = $dir . '/.tmp_' . basename($this->file) . '_' . bin2hex(random_bytes(4));
+        if (@file_put_contents($tmp, $json) === false) { throw new ConfigException('Failed to write temp config file'); }
+        if (!@rename($tmp, $this->file)) { @unlink($tmp); throw new ConfigException('Failed to replace config file'); }
         $this->dirty = false;
     }
 
@@ -89,6 +91,11 @@ class config_manager {
             }
         }
         return ['errors'=>$errors,'warnings'=>$warnings];
+    }
+
+    public function getRemotes(): array { return $this->raw['remotes'] ?? []; }
+    public function saveRemotes(array $remotes, bool $persist = true): void {
+        $this->raw['remotes'] = $remotes; $this->dirty = true; $this->resolved = null; if ($persist) { $this->save(); }
     }
 
     // ---------------- Internal: loading & resolving ----------------

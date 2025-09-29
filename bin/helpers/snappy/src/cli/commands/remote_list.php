@@ -6,28 +6,38 @@ use Snappy\Cli\context;
 
 class remote_list extends base_command {
     public function name(): string { return 'remote.list'; }
-    public function description(): string { return 'List configured snapshot remotes'; }
-    public function usage(): string { return 'Usage: tsnap remote list'; }
-    public function examples(): array { return [
-        'tsnap remote list',
-    ]; }
+    public function description(): string { return 'List configured remotes (credentials redacted)'; }
+    public function usage(): string { return 'Usage: tsnap remote list [--json]\nShows configured remotes excluding the built-in local.'; }
+    public function examples(): array { return [ 'tsnap remote list', 'tsnap remote list --json' ]; }
 
     public function run(array $args, context $ctx): int {
         $remotes = $ctx->registry->list();
         if (isset($remotes['local'])) { unset($remotes['local']); }
         if (!$remotes) { $ctx->out->info('(none)'); $ctx->out->json(['remotes'=>[]]); return 0; }
-        $headers = ['NAME','TYPE','CREATED','DETAILS'];
+        // Stable sort by name
+        ksort($remotes, SORT_NATURAL | SORT_FLAG_CASE);
+        $headers = ['NAME','ENDPOINT','BUCKET','REGION','KEY','SECRET','PATHSTYLE'];
         $rows = [];
-        $redacted = [];
-        foreach ($remotes as $name=>$meta) {
-            $type=$meta['type']??''; $details='';
-            if($type==='local'){ $details=$meta['path']??''; }
-            elseif($type==='s3'){ $cfg=$meta['config']??[]; if(isset($cfg['key'])){ $cfg['key']='REDACTED'; } if(isset($cfg['secret'])){ $cfg['secret']='REDACTED'; } $meta['config']=$cfg; $details=($cfg['endpoint']??'').'/'.($cfg['bucket']??''); }
-            $rows[] = [$name,$type,$meta['created']??'',$details];
-            $redacted[$name] = $meta;
+        $jsonOut = [];
+        foreach ($remotes as $name => $meta) {
+            $cfg = $meta['config'] ?? [];
+            $endpoint = (string)($cfg['endpoint'] ?? '');
+            $bucket = (string)($cfg['bucket'] ?? '');
+            $region = (string)($cfg['region'] ?? '');
+            $key = $cfg['key'] ?? '';
+            $keyDisp = $key !== '' ? substr($key,0,4) : '';
+            $secretDisp = (isset($cfg['secret']) && $cfg['secret']!=='') ? '********' : '';
+            $pathStyle = !empty($cfg['path_style']) ? 'yes' : 'no';
+            $rows[] = [$name,$endpoint,$bucket,$region,$keyDisp,$secretDisp,$pathStyle];
+            $jsonOut[$name] = [
+                'endpoint'=>$endpoint,
+                'bucket'=>$bucket,
+                'region'=>$region,
+                'path_style'=>!empty($cfg['path_style']),
+            ];
         }
         $ctx->out->table($headers,$rows);
-        $ctx->out->json(['remotes'=>$redacted]);
+        $ctx->out->json(['remotes'=>$jsonOut]);
         return 0;
     }
 }

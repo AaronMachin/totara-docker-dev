@@ -77,7 +77,7 @@ class remote_registry {
 
     public function add(string $name, string $type, array $config): void {
         if ($name === 'local') { throw new ValidationException('Cannot redefine reserved remote "local"'); }
-        if (!preg_match('/^[a-zA-Z0-9._-]+$/', $name)) { throw new ValidationException('Invalid remote name'); }
+        if (!preg_match('/^[a-z0-9][a-z0-9_-]{0,31}$/', $name)) { throw new ValidationException('Invalid remote name'); }
         if ($this->has($name)) { throw new ValidationException('Remote already exists: ' . $name); }
         if (!in_array($type, ['s3','memory'], true)) { throw new ValidationException('Unsupported remote type: ' . $type); }
         if ($type === 's3') {

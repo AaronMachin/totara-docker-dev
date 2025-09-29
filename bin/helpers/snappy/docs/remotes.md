@@ -1,24 +1,39 @@
-# Remotes (T14A Baseline)
+# Remotes (T14F Config CRUD Only)
 
-Status: Configuration-only skeleton. No listing, push, or pull yet.
+Status: Basic configuration (add/list/remove) stored in config.json. Listing integration with snapshot operations deferred to T14J.
 
 ## Purpose
-Prepare for future remote catalog & artifact synchronization without retaining legacy push/pull complexity.
+Define S3-compatible remote endpoints (name -> endpoint, bucket, credentials) for future snapshot pull/push & remote listing features.
 
-## Configuration Schema (config.json excerpt)
+## Supported Operations
+- Add: `remote add <name> --endpoint=URL --bucket=NAME --region=REG --key=ACCESSKEY --secret=SECRET [--path-style]`
+  - `region` optional (defaults `us-east-1`)
+  - `--path-style` sets path_style=true for MinIO / path addressing
+  - Name pattern: `^[a-z0-9][a-z0-9_-]{0,31}$` (lowercase)
+- List: `remote list` (redacts credentials)
+- Remove: `remote remove <name>` (cannot remove `local`)
+
+## Redaction Rules
+Human output:
+- Access key: only first 4 characters shown
+- Secret: fully masked as `********`
+JSON (`--json` global flag):
+- Credentials omitted entirely (no `key` or `secret` fields)
+
+## config.json Structure (excerpt)
 ```
 {
   "version": 1,
   "remotes": {
-    "local": { "type": "local", "path": "/abs/path", "created": "2025-09-29T00:00:00Z" },
+    "local": { "type": "local", "path": "/abs/path", "created": "..." },
     "prod": {
       "type": "s3",
       "config": {
         "endpoint": "https://s3.example.com",
         "bucket": "mybucket",
         "region": "us-east-1",
-        "key": "AKIA...",      // redacted in output
-        "secret": "SECRET...", // redacted in output
+        "key": "AKIAFULLKEY...",   // redacted in human output, omitted in JSON mode
+        "secret": "SECRET...",      // never shown in output
         "path_style": true
       },
       "created": "..."
@@ -28,20 +43,27 @@ Prepare for future remote catalog & artifact synchronization without retaining l
 }
 ```
 
-## Commands
-- `remote add <name> s3 --endpoint= --bucket= --region= --key= --secret= [--path-style]`
-- `remote list` (redacts `key` and `secret` fields)
-- `remote remove <name>` (cannot remove `local`)
+## Examples
+```
+# Add a production remote (MinIO style path addressing)
+tsnap remote add prod --endpoint=http://minio.local:9000 --bucket=snaps --key=minioadmin --secret=minioadmin --path-style
 
-## Design Notes
-- Only S3 (or compatible) placeholder supported. Validation ensures required fields present.
-- No network I/O performed in T14A; storage client will be introduced when listing/download needed.
-- Secrets stored in plain config (encryption explicitly out-of-scope per ticket); never logged or shown.
+# List (human)
+tsnap remote list
 
-## Future (Deferred)
-(To be implemented in later tickets)
-- Remote snapshot catalog listing (manifest scan or compact index)
-- Artifact push / pull
-- Credentials sourcing via environment variables
-- Optional credential helper abstraction
+# List JSON
+tsnap --json remote list
 
+# Remove
+tsnap remote remove prod
+```
+
+## Deferred (Future Tickets)
+- Remote snapshot enumeration (T14J)
+- Pull / push operations (T14I / later)
+- Credential helpers / env sourcing
+- Optional reachability or credential validation
+
+## Notes
+- Config file writes are atomic (temp + rename).
+- No secrets are logged beyond first 4 chars of the access key.
