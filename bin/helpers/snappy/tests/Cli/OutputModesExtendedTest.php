@@ -35,7 +35,7 @@ final class OutputModesExtendedTest extends AbstractCliTestCase {
     }
 
     public function testConfigSetGetJson(): void {
-        $set = $this->runCli('--json config set options.test.flag true --persist');
+        $set = $this->runCli('--json config set options.test.flag true');
         $d = json_decode($set, true);
         $this->assertSame('config.set', $d['command']);
         $this->assertTrue((bool)$d['data']['payload']['value']);

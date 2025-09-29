@@ -17,5 +17,10 @@
   },
   "options": {
     "default_remote": "catalog"
+  },
+  "aliases": {
+    "create": "snapshot.create",
+    "list": "snapshot.list",
+    "show": "snapshot.show"
   }
 }

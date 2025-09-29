@@ -35,13 +35,13 @@ final class HierarchicalCommandsTest extends InProcessCliTestCase {
         $this->assertSame('1',trim($root));
         [$set,$setCode,$ctx] = $this->runInProcess('config set options.custom.value 123');
         $this->assertSame(0,$setCode);
-        $this->assertStringContainsString('updated (in-memory)',$set);
+        $this->assertStringContainsString('updated options.custom.value',$set);
         [$get,$getCode] = $this->runInProcess('config get options.custom.value');
         $this->assertSame(0,$getCode);
         $this->assertSame('123',trim($get));
-        [$persist,$persistCode] = $this->runInProcess('config set options.custom.flag true --persist');
-        $this->assertSame(0,$persistCode);
-        $this->assertStringContainsString('persisted',$persist);
+        [$flagSet,$flagSetCode] = $this->runInProcess('config set options.custom.flag true');
+        $this->assertSame(0,$flagSetCode);
+        $this->assertStringContainsString('updated options.custom.flag',$flagSet);
         [$flag,$flagCode] = $this->runInProcess('config get options.custom.flag');
         $this->assertSame(0,$flagCode);
         $this->assertSame('1',trim($flag));

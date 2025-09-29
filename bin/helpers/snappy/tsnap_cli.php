@@ -1,7 +1,4 @@
 <?php
-/**
- * Snappy CLI baseline (T14A) - trimmed: removed legacy share/verify/doctor/prune/tag/hash-store/push/pull.
- */
 
 $composerAutoload = __DIR__ . '/vendor/autoload.php';
 if (file_exists($composerAutoload)) {
@@ -41,6 +38,27 @@ $router->register('snapshot','show',   new Snappy\Cli\Commands\snapshot_show());
 $router->register('snapshot','metrics',new Snappy\Cli\Commands\snapshot_metrics());
 $router->register('snapshot','export', new Snappy\Cli\Commands\snapshot_export());
 $router->register('snapshot','import', new Snappy\Cli\Commands\snapshot_import());
+// Configurable root aliases: default to create/list/show
+$aliasMap = ['create'=>'snapshot.create','list'=>'snapshot.list','show'=>'snapshot.show'];
+$configuredAliasMap = $config->get('aliases', null);
+
+if(is_array($configuredAliasMap)) {
+    foreach ($configuredAliasMap as $alias => $canonical) {
+        if (is_string($alias) && is_string($canonical)) {
+            $aliasMap[$alias] = $canonical; // override or add
+        }
+    }
+}
+
+
+foreach ($aliasMap as $alias=>$canonical) {
+    if (!is_string($alias) || !is_string($canonical)) { continue; }
+    if (!str_contains($canonical,'.')) { continue; }
+    [$p,$s] = explode('.', $canonical, 2);
+    if (!isset($p,$s) || $p!== 'snapshot') { continue; } // restrict to snapshot commands only
+    try { $router->register_alias($alias,$p,$s); } catch (\Throwable $e) { /* ignore invalid */ }
+}
+
 // Add share commands
 $router->register('share','create', new Snappy\Cli\Commands\share_share_create());
 $router->register('share','import', new Snappy\Cli\Commands\share_share_import());
@@ -71,6 +89,9 @@ $ctx = new context($config, $remoteRegistry, $manager, $index, $out);
 
 try {
     $exit = $router->route($argv, $ctx);
+    if ($router->last_command() === null && count($argv) >= 2) {
+        $GLOBALS['__snappy_force_command'] = $argv[0].'.'.$argv[1];
+    }
     $out->flush(method_exists($router,'last_command')? $router->last_command():null, $exit===0?'ok':'error');
 } catch (\Snappy\Support\Exception\SnappyException $e) {
     $code = \Snappy\Support\Exception\ExitCodes::codeFor($e);

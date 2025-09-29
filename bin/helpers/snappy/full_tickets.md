@@ -175,195 +175,6 @@ Global Constraints:
  - Security: never log remote secrets or share payload raw secret fields (none yet). Redact key/secret in remote list output.
  - Simplicity over flexibility—avoid premature abstractions.
 
-====================================================================================================================
-T14A Codebase Trim & Baseline (Remove Legacy, Align with tar.gz, Introduce Remote Skeleton Only Config)
-====================================================================================================================
-ID: T14A
-Title: Codebase Trim & Baseline (Remove legacy share/verify/doctor, adjust for tar.gz, keep remote skeleton)
-Development Context Prompt (repeat for this ticket):
-You are an autonomous senior PHP CLI tooling engineer. Before coding: restate objective, list affected files, read them, plan minimal diff, implement, run full tests, iterate until green, commit with message pattern "T14A feat(core): ...". Enforce streaming, no new deps, atomic writes, redact secrets, no scope creep.
-Project Name: Snappy
-Project Purpose: (See Universal Context) Provide deterministic snapshot lifecycle with minimal surface; prepare for new remote + share features.
-Rewrite Note: Replaces legacy T13A approach; removes doctor & verify commands entirely; converts artifact terminology from .snapx to .tar.gz throughout docs & help; retains minimal S3 storage class only if needed for remote list.
-Context Recap: Current repo contains legacy remote/share/tunnel code, s3_storage, verify & doctor commands, tag & object hash store features, push/pull flows. New direction wants only remote configuration + listing (read-only) while removing complex legacy remote stack, plus dropping verify/doctor commands in favor of deterministic export/import.
-Objective: Produce a lean baseline: only snapshot*, share (placeholder commands not yet implemented), remote add/list/remove (stubs), metrics, gc. All references to .snapx, verify, doctor purged. Provide docs describing new artifact spec (.tar.gz) & remote concept.
-Rationale: Shrinks cognitive load; clarifies new direction; prevents drift when implementing IntegrityService & exporter.
-Dependencies: None.
-Preconditions: Test suite runs (can be red initially for removed tests) but will be restored green after removal.
-Scope (In):
- - Delete: verify_run.php, doctor_run.php and related tests.
- - Delete legacy share code (old share_registry) and hosting/* (ngrok etc.).
- - Remove snapshot hash store (objects/), tag commands, multi-remote listing & pcntl logic, push/pull commands, remote_index_manager, remote_snapshot_cache.
- - Rename artifact references in README/docs from .snapx to .tar.gz.
- - Introduce remote command group with add/list/remove stubs (no network calls yet) storing config under config.json (remotes section).
- - Ensure s3_storage.php retained minimally (strip unused methods if necessary) or create minimal remote_s3_client.php if simpler.
- - Update command_router help ordering: Snapshot, Share, Remote, Maintenance (metrics,gc), Config (if still present), Other.
- - Add docs/artifact_spec.md and docs/remotes.md (purpose, configuration, no push/pull yet).
- - Add docs/deferred.md enumerating removed legacy capabilities.
-Scope (Out): Export/import/share implementation details (later tickets), IntegrityService (later), remote listing logic (later T14F/T14E if needed).
-Implementation Steps:
- 1. Inventory removal targets; record in docs/refactor_notes.md (pre/post LOC).
- 2. Remove files & tests; adjust autoload if necessary.
- 3. Add remote command stubs + config editing (safe rewrite of config_manager if needed).
- 4. Update README + new docs.
- 5. Run phpunit; remove/adjust failing tests due to removed commands.
- 6. Commit.
-Data Structures / Schemas: config.json addition: remotes: { <name>: {endpoint,bucket,region,key,secret,path_style?:bool} }.
-File Targets: src/cli/commands/* (remove/add), src/remote/* (if created), config_manager.php (modify), docs/*.md, README.md.
-Testing & Validation: phpunit green; tsnap help shows updated minimal commands; remote add/list/remove round trip persists config.
-Acceptance Criteria:
- - No references to verify/doctor/.snapx remain.
- - remote add/list/remove functional (list redacts key/secret).
- - docs updated & artifact spec file present.
- - refactor_notes.md lists removed files & LOC delta.
-Edge Cases: Adding remote with existing name -> error; removing unknown remote -> error.
-Rollback Strategy: Revert commit.
-Risks & Mitigations: Accidental removal of code needed by snapshot creation -> run snapshot create test after removal.
-Follow-Up Tasks: T14B manifest freeze.
-Time Estimate: S.
-Deliverables: Lean baseline code.
-Agent Execution Checklist:
- - [ ] Remove legacy files/tests
- - [ ] Add remote command stubs
- - [ ] Update docs & README
- - [ ] Adjust config schema
- - [ ] Run tests & commit (T14A feat(core): trim & baseline)
-
-====================================================================================================================
-T14B Manifest v2 Contract Freeze (Canonical Hash Guard)
-====================================================================================================================
-ID: T14B
-Title: Manifest v2 Schema Contract Freeze (Golden Hash Test, tar.gz context)
-Development Context Prompt (repeat for this ticket):
-Execute with strict steps: restate, inspect manifest example + planned test files, implement canonicalizer & test, no extra refactors, run full test suite, commit "T14B feat(schema): ...".
-Project Name: Snappy
-Project Purpose: (Universal Context)
-Rewrite Note: Reinforces manifest determinism pre IntegrityService/export.
-Context Recap: Manifest exists but mutable; exporter/importer/share rely on stable shape & canonical hash.
-Objective: Freeze manifest_v2 schema via canonical JSON hashing test + documentation of change protocol.
-Rationale: Prevent accidental breaking changes mid-cycle.
-Dependencies: T14A (baseline trimmed) recommended.
-Preconditions: schema/manifest_v2.json & example present.
-Scope (In): Canonicalizer helper; golden test; docs/schema_change.md referencing tar.gz artifact.
-Scope (Out): Runtime validation integration.
-Implementation Steps: (same as universal but ensure artifact spec link).
-Data Structures: expected hash constant.
-File Targets: tests/schema/CanonicalJson.php, tests/schema/ManifestV2FreezeTest.php, docs/schema_change.md.
-Testing & Validation: Editing example without updating hash fails test with clear instructions.
-Acceptance Criteria: Golden test passes; documentation present.
-Edge Cases: Whitespace changes do not affect canonical form.
-Rollback Strategy: Remove test.
-Risks & Mitigations: Slows schema iteration—acceptable.
-Follow-Up Tasks: T14C IntegrityService.
-Time Estimate: XS.
-Deliverables: Freeze test & docs.
-Agent Execution Checklist:
- - [ ] Implement canonicalizer
- - [ ] Add freeze test
- - [ ] Add schema change doc
- - [ ] Run tests & commit (T14B feat(schema): freeze manifest v2)
-
-====================================================================================================================
-T14C IntegrityService Extraction (Central Hashing for Files, Manifest, Artifact Lines)
-====================================================================================================================
-ID: T14C
-Title: Central IntegrityService (sha256 streaming + canonical manifest + artifact lines)
-Development Context Prompt (repeat for this ticket):
-Implement only hashing consolidation. Replace raw hash usage. Ensure tests prove determinism & tamper detection. Commit "T14C feat(integrity): ...".
-Project Name: Snappy
-Project Purpose: (Universal Context)
-Rewrite Note: Consolidates hash logic before exporter/importer/share/remote listing reliance.
-Context Recap: Current code hashes files ad hoc inside snapshot_manager; no unified canonical JSON hashing.
-Objective: Provide IntegrityService with consistent streaming hashing primitives & file verification.
-Rationale: Single source reduces bugs; enables deterministic export/import.
-Dependencies: T14B.
-Preconditions: Baseline trimmed; tests runnable.
-Scope (In): integrity_service.php with: hashFile, hashStream, hashManifest(array), artifactLinesHash(array lines), verifyFiles(expected map, baseDir) returning VerificationResult struct (ok:boolean, failures:[file=>[expected,actual]]), shortVerificationCode(sha256) for share (base32 first 20 bytes grouped 4-4-4-4-4). Replace direct hash_file calls in snapshot_manager.
-Scope (Out): Artifact tar building (T14D), remote listing enhancements (later).
-Implementation Steps: Implement service; inject / create inside snapshot_manager; adapt code; add tests (determinism, tamper detection, large file streaming memory sanity, shortVerificationCode format).
-Data Structures: VerificationResult array or simple class.
-File Targets: src/snapshot/integrity_service.php, snapshot_manager.php, tests/Integrity/*.
-Testing & Validation: All new tests pass; snapshot create still works.
-Acceptance Criteria: No direct hash_file usage outside IntegrityService.
-Edge Cases: Empty file hashing stable; large file hashed without memory spike.
-Rollback Strategy: Revert service commit.
-Risks & Mitigations: Missed replacement—grep for hash_file.
-Follow-Up Tasks: T14D exporter uses service.
-Time Estimate: S.
-Deliverables: IntegrityService & tests.
-Agent Execution Checklist:
- - [ ] Add service
- - [ ] Refactor snapshot_manager
- - [ ] Add tests
- - [ ] Run tests & commit (T14C feat(integrity): central hashing)
-
-====================================================================================================================
-T14D Snapshot Export (.tar.gz Streaming Artifact)
-====================================================================================================================
-ID: T14D
-Title: Snapshot Exporter (.tar.gz deterministic streaming)
-Development Context Prompt (repeat for this ticket):
-Focus: deterministic streaming tar.gz generation. No differential export. Validate ordering & hashes. Commit "T14D feat(export): ...".
-Project Name: Snappy
-Project Purpose: (Universal Context)
-Rewrite Note: Replaces prior .snapx with .tar.gz naming; integrates IntegrityService.
-Context Recap: Need portable artifact to share/import & for remote listing replication.
-Objective: Implement snapshot export command writing <uid>.tar.gz containing manifest-v2.json, export.json, files/* in order with deterministic artifact hash.
-Rationale: Foundation for import & share flows.
-Dependencies: T14C, T14B.
-Preconditions: At least one snapshot exists.
-Scope (In): snapshot export <uid|prefix> [--out-dir=DIR] [--stdout] [--no-gzip(optional future flag; skip gzip -> .tar)]; export.json creation; artifact_sha256 logic per universal spec; streaming tar writer (no buffering entire file list). Recompute all file hashes & manifest hash on export for integrity.
-Scope (Out): Encryption, differential exports, remote push.
-Implementation Steps: Build file list; compute hashes streaming; generate lines; artifact_sha256; write export.json; stream tar entries in order; finalize rename; output summary (text|JSON).
-Data Structures: export.json schema_version=1 as specified; lines for artifact hash.
-File Targets: new exporter service (src/snapshot/export_service.php), CLI command src/cli/commands/snapshot_export.php, tests/Snapshot/ExportDeterminismTest.php, ExportOrderingTest.php, LargeFileExportTest.php.
-Testing & Validation: Repeat export stable artifact_sha256; order correct; memory usage bounded.
-Acceptance Criteria: Artifact produced; hash deterministic; tests green.
-Edge Cases: Snapshot with multiple files; zero-byte file; gzip availability; stdout mode piping.
-Rollback Strategy: Revert commit.
-Risks & Mitigations: Tar writer bugs—add small fixture validation.
-Follow-Up Tasks: T14E importer, T14G share.
-Time Estimate: M.
-Deliverables: Export command & tests.
-Agent Execution Checklist:
- - [ ] Implement export service
- - [ ] Add CLI command
- - [ ] Add tests
- - [ ] Run tests & commit (T14D feat(export): snapshot tar.gz exporter)
-
-====================================================================================================================
-T14E Snapshot Import (.tar.gz Streaming Validation + uid-strategy)
-====================================================================================================================
-ID: T14E
-Title: Snapshot Importer (.tar.gz ingestion & validation)
-Development Context Prompt (repeat for this ticket):
-Goal: streaming validation + uid strategy. Clean temp dirs on failure. No network logic. Commit "T14E feat(import): ...".
-Project Name: Snappy
-Project Purpose: (Universal Context)
-Rewrite Note: Aligns with tar.gz spec; prepares for share import; verify command removed so import must be authoritative.
-Context Recap: Export available; need robust importer for artifact consumption + optional uid regeneration.
-Objective: Implement ImportService + snapshot import CLI performing streaming extraction & hash verification.
-Rationale: Enables distribution & peer workflows safely.
-Dependencies: T14D, T14C.
-Preconditions: Artifact available (path or stdin).
-Scope (In): ImportService importArtifact(path, options) with uidStrategy keep|new, register bool (default true), outDir override, provenance for new; streaming tar(.gz) read; manifest/export validation; recompute hashes & artifact_sha256; atomic promotion to snapshots/; conflict detection when keep and uid exists.
-Scope (Out): Restore execution (separate restore command already exists), remote fetch (share handles network), signature.
-Implementation Steps: Detect gzip via magic; iterate tar entries; track duplicates; compute lines & hashes; validate; apply uidStrategy; write import_provenance.json for new; CLI command added; tests.
-Data Structures: ImportOptions, ImportResult, import_provenance.json {original_uid, original_manifest_sha256, original_artifact_sha256, imported_uid, imported_utc, strategy}.
-File Targets: src/snapshot/import_service.php, src/cli/commands/snapshot_import.php, tests/Snapshot/ImportServiceTest.php, ImportProvenanceTest.php, ImportDuplicateUidTest.php.
-Testing & Validation: Corruption detection (flip byte); duplicate path rejection; multiple new imports produce distinct uids; keep strategy fails on existing; stdin path simulation.
-Acceptance Criteria: All tests green; importer streaming & deterministic; no leftover temp dirs on failure.
-Edge Cases: Missing manifest-v2.json; missing export.json; truncated gzip; invalid artifact hash.
-Rollback Strategy: Revert commit.
-Risks & Mitigations: Partial extraction on failure—ensure cleanup routine.
-Follow-Up Tasks: T14F remote listing, T14G share.
-Time Estimate: M.
-Deliverables: Import service + CLI.
-Agent Execution Checklist:
- - [ ] Implement service
- - [ ] Add CLI
- - [ ] Add tests
- - [ ] Run tests & commit (T14E feat(import): snapshot importer)
 
 
 
@@ -396,235 +207,500 @@ End of prompt.
 
 
 
-
-====================================================================================================================
-T14F Remote Management (Config CRUD Only – Defers Listing Integration)
-====================================================================================================================
-ID: T14F
-Title: Remote Config Management (S3 read-only config CRUD – listing integration deferred to T14J)
-Development Context Prompt (repeat for this ticket):
-Implement ONLY remote add/list/remove configuration persistence. Do NOT modify snapshot list yet. Redact secrets. No network listing beyond lightweight credential sanity (optional head bucket best-effort). Commit "T14F feat(remote): config management".
-Project Name: Snappy
-Project Purpose: (Universal Context)
-Rewrite Note: Split original combined config + listing into two smaller tickets (T14F config, T14J listing integration) to keep diffs minimal and reduce risk.
-Context Recap: We need remote definitions (name -> endpoint, bucket, credentials) before we can implement remote snapshot enumeration.
-Objective: Provide stable CRUD for remotes stored in config.json (remotes section) with validation & redaction support.
-Rationale: Establishes foundation for later remote listing, pull, and push features while keeping initial change set very small (git-like incremental evolution).
-Dependencies: T14A baseline (config manager present).
-Preconditions: config.json writable.
+ ===================================================Ticket ID: T15A Title: Snapshot Delete Command (Remove Local Snapshot by UID or Prefix) Objective: Add a safe snapshot delete command: tsnap snapshot delete <uid|prefix> that removes one local snapshot directory (snaps/<uid>/) and prunes index.json atomically without affecting other snapshots.</uid>
+Context: Snapshots accumulate under $SNAPPY_SNAPSHOT_BASE/snaps. Manual filesystem deletion risks stale index.json entries and user mistakes (ambiguous prefixes). Current lifecycle lacks a sanctioned deletion path; disk use can grow unbounded in CI/dev churn.
+Rationale: Provide controlled cleanup, preserve integrity of index, reduce manual error risk, enable automation scripts.
+Dependencies: Existing snapshot_manager (create/list/show/export/import/metrics), index_manager (writes index.json), snapshot_loader (used for resolution), output_formatter, command_router.
+Preconditions:
+Local snapshot store initialized.
+UID/prefix corresponds to at least one snapshot.
+No locking mechanism yet (multi-process race is out of scope; handled best-effort).
 Scope (In):
- - remote add <name> --endpoint= --bucket= --region= --key= --secret= [--path-style]
- - remote list (prints table or JSON of configured remotes with redacted credentials)
- - remote remove <name>
- - Validation: unique name; required fields non-empty; name pattern ^[a-z0-9][a-z0-9_-]{0,31}$.
- - Redaction: Show first 4 chars of key only; mask secret entirely (e.g. **** or 8 asterisks) in human output; omit secrets from JSON unless --show-secrets (NOT implemented now – keep simple).
-Scope (Out): snapshot list --remote (T14J), remote pull (T14I), network bucket listing, credentials testing, caching.
-Implementation Steps:
- 1. Extend config_manager to support getRemotes(), saveRemotes().
- 2. Implement three command classes remote_add.php, remote_list.php, remote_remove.php.
- 3. Update command_router registration & help grouping.
- 4. Add tests: add/remove cycle, duplicate add error, remove missing error, redaction in list, JSON output excludes secrets.
- 5. Docs: update docs/remotes.md (config section) – note listing/pull in future tickets.
-Data Structures: config.json { remotes: { name: {endpoint,bucket,region,key,secret,path_style?:bool} } }.
-File Targets: config_manager.php, new command files, docs/remotes.md, tests/Remote/RemoteConfigTest.php.
-Testing & Validation: PHPUnit tests cover all acceptance criteria.
-Acceptance Criteria:
- - CRUD works; duplicate prevented; removal of existing succeeds.
- - Redacted output (no secret leakage) verified by test.
- - JSON output contains endpoint,bucket,region,path_style; omits key/secret or provides redacted forms consistently.
-Edge Cases: Invalid name -> error code; missing required flags -> usage error (64); config.json absent -> auto create.
-Rollback Strategy: Revert commit.
-Risks & Mitigations: Secret leakage -> enforced redaction tests.
-Follow-Up Tasks: T14J snapshot list remote integration; T14I remote pull.
-Time Estimate: S.
-Deliverables: Remote config commands + tests + docs update.
-Agent Execution Checklist:
- - [ ] Implement config manager extensions
- - [ ] Add command classes
- - [ ] Add tests
- - [ ] Update docs
- - [ ] Run tests & commit (T14F feat(remote): config management)
-
-====================================================================================================================
-T14G Ephemeral Share (Peer-to-Peer Encoded Command, tar.gz)
-====================================================================================================================
-ID: T14G
-Title: tsnap share (ephemeral encoded peer transfer)
-Development Context Prompt (repeat for this ticket):
-Implement minimal HTTP server & payload. Enforce TTL/max. Integrity check before import. Commit "T14G feat(share): ...".
-Project Name: Snappy
-Project Purpose: (Universal Context)
-Rewrite Note: Uses export artifact; no central registry; leverages IntegrityService shortVerificationCode.
-Context Recap: Need low-friction handoff after export/import exist; replaces removed legacy share tokens.
-Objective: share create <uid> & share import <ENCODED> implementing encoded payload distribution.
-Rationale: Quick human copy/paste distribution path.
-Dependencies: T14D export, T14E import, T14C IntegrityService.
-Preconditions: Snapshot present; export command available.
-Scope (In): share_create_service, share_http_server (only /health & artifact GET), payload_builder, shortVerificationCode in IntegrityService, provenance file share_provenance.json, options (--listen=:0, --ttl, --max, --multi, --no-auto-export, --uid-strategy override for import).
-Scope (Out): Auth tokens, tunnels, multi-artifact sessions, encryption.
-Implementation Steps: If artifact missing auto export; start server on chosen port; compute payload; print command; count successful downloads; shutdown per limits; import side downloads, verifies sha256, calls ImportService (uid-strategy default new), writes share_provenance.json.
-Data Structures: share_provenance.json {share_version:1, source_host, source_port, artifact, artifact_sha256, verification_code, original_uid, imported_uid, uid_strategy, received_utc, encoded_payload}.
-File Targets: src/share/* new, src/cli/commands/share_share_create.php, share_share_import.php, modify command_router, integrity_service.php (add shortVerificationCode), tests/Share/*.
-Testing & Validation: Round trip test (create server thread/process -> import); tamper detection; TTL expiry; multi limit; code format test; provenance file content.
-Acceptance Criteria: One-line command works; tamper aborts; server enforces limits; provenance recorded; memory stable.
-Edge Cases: Port busy; partial download; malformed payload; expired TTL.
-Rollback Strategy: Remove share files & commands.
-Risks & Mitigations: Hanging server—implement timeout & signal handling.
-Follow-Up Tasks: Optional QR code output.
-Time Estimate: M.
-Deliverables: Share commands & tests.
-Agent Execution Checklist:
- - [ ] Implement services
- - [ ] Add commands
- - [ ] Add tests
- - [ ] Run tests & commit (T14G feat(share): ephemeral peer share)
-
-====================================================================================================================
-T14H Metrics & GC Refinement (No Verify/Doctor)
-====================================================================================================================
-ID: T14H
-Title: Metrics & GC (post share/remote integration, no verify/doctor)
-Development Context Prompt (repeat for this ticket):
-Provide aggregated stats & safe cleanup only. Guard against deleting active snapshots. Commit "T14H feat(maintenance): ...".
-Project Name: Snappy
-Project Purpose: (Universal Context)
-Rewrite Note: Adjust metrics to rely solely on manifest-v2.json; GC cleans tmp & stale partial imports/export temps.
-Context Recap: With verify/doctor removed, maintenance reduced to metrics & garbage collection.
-Objective: Provide accurate aggregate stats & safe cleanup.
-Rationale: Keep codebase lean while still giving user visibility & hygiene.
-Dependencies: T14D (export manifests standardized), earlier tickets for baseline.
-Preconditions: Snapshots exist.
-Scope (In): metrics command outputs JSON & text: total_snapshots, total_bytes, newest_uid+created, largest_uid+bytes, average_size, compressed_count. gc command: [--dry-run] remove tmp/<uid> older than N hours (default 24), orphan export temp files *.tmp older than 1h.
-Scope (Out): Object hash store cleanup (removed), remote GC.
-Implementation Steps: Update existing metrics & gc implementations or re-write small services; tests verifying dry-run vs real; ensure atomic deletions.
-Data Structures: None new; simple arrays.
-File Targets: metrics command, gc command, tests/Maintenance/*.
-Testing & Validation: Create fixture snapshots; run metrics; assert numbers; create temp dirs/files; run gc dry-run then live.
-Acceptance Criteria: Commands run; gc removes expected entries; no removal of active snapshots.
-Edge Cases: Permission errors (skip with warning); negative ages (ignore).
-Rollback Strategy: Revert commit.
-Risks & Mitigations: Accidental deletion—restrict deletion paths to temp/* and *.tmp in export dir.
-Follow-Up Tasks: None.
-Time Estimate: S.
-Deliverables: Updated commands & tests.
-Agent Execution Checklist:
- - [ ] Implement metrics updates
- - [ ] Implement gc updates
- - [ ] Add tests
- - [ ] Run tests & commit (T14H feat(maintenance): metrics & gc refinement)
-
-====================================================================================================================
-T14I Remote Pull (Download Snapshot From Remote S3 Into Local Store)
-====================================================================================================================
-ID: T14I
-Title: Remote Pull (S3 object set → local snapshot directory)
-Development Context Prompt (repeat for this ticket):
-Implement ONLY read/download path from configured remote into local snapshots. Follow strict steps: restate, inspect s3_storage + snapshot_manager, plan minimal service, implement streaming download & integrity check, add CLI command remote pull, add tests (success, missing uid, checksum mismatch), commit "T14I feat(remote): pull snapshot". No scope creep (no push, no resume, no parallel multi-remote). Do not log secrets. Use IntegrityService for verification.
-Project Name: Snappy
-Project Purpose: (Universal Context)
-Rewrite Note: Extends remote read-only capabilities with actual snapshot retrieval (pull) while still avoiding upload/push complexity.
-Context Recap: T14F provided remote configuration and listing. Users now need to materialize a remote snapshot locally to restore or share without re-exporting. Remote buckets store snapshots under snaps/<uid>/ containing manifest-v2.json (preferred) or legacy meta.json + data files.
-Objective: Add remote pull <remote> <uid|prefix> command to download a snapshot directory from a configured remote S3-compatible bucket into local snapshots/, verifying integrity when manifest-v2.json present. Support uid-strategy keep|new similar to import (when new, adjust manifest uid and write import_provenance_remote.json).
-Rationale: Enables consumption of published snapshots/canonical catalogs; foundation for later push/diff features.
-Dependencies: T14C IntegrityService, T14J remote listing (for UID resolution), manifest-v2 freeze (T14B).
-Preconditions: Remote configured; remote list shows target snapshot; local filesystem writable; IntegrityService available.
-Scope (In):
- - CLI: remote pull <remote> <uid|prefix> [--uid-strategy=keep|new] [--force] [--progress] [--out-dir=<override>]
- - UID resolution via listing (prefix unique match) or exact uid.
- - Streaming download of each file in snaps/<uid>/ excluding transient objects; create temp dir then atomic rename.
- - Integrity: If manifest-v2.json exists remotely, download it first, parse checksums, then for each file compute sha256 after download and compare. If only meta.json present, download files and compute checksums; generate new manifest-v2.json locally (mark provenance source="remote-meta-v1").
- - uid-strategy=new: generate new uid, adjust manifest (uid only), write import_provenance_remote.json {original_uid, strategy, source_remote, original_manifest_sha256? (if available), imported_uid, imported_utc}.
- - --force allows overwrite of existing snapshot when strategy=keep (else fail by default).
- - Progress: simple stderr line per file (name, bytes) unless --json.
- - JSON output: {action:"remote_pull", remote, uid, final_uid, files, bytes, verified, provenance_path?}.
-Scope (Out): push/upload, multipart parallelism, resumable partial downloads, encryption, caching, metrics.
-Implementation Steps:
- 1. Implement RemotePullService (src/remote/remote_pull_service.php) with pull(RemoteConfig, uidOrPrefix, options)->Result.
- 2. Add uid resolution helper using existing listing logic (fetch manifests list & match prefix).
- 3. Download manifest-v2.json (if present) then iterate expected files list; else build file list by listing objects under snaps/<uid>/ and excluding manifest/meta.
- 4. For each file: stream to temp path (use fopen with read/write chunk 64KB) computing sha256 via IntegrityService hashStream.
- 5. Compare hashes (if manifest present). Accumulate size & file count.
- 6. If manifest absent: after files downloaded compute metadata & write generated manifest-v2.json (schema_version=2) using existing structure + computed checksums; include provenance.remote_source_version=1.
- 7. Apply uid strategy new (rename dir + modify manifest) + write import_provenance_remote.json.
- 8. Atomic promote temp dir to snapshots/<final_uid> (fail if exists unless --force when keep).
- 9. CLI command remote_pull.php delegates to service, handles JSON/text output & exit codes (hash mismatch -> non-zero).
- 10. Tests: success path with manifest; path with meta-only; prefix ambiguous error; uid exists no --force error; uid-strategy=new provenance; checksum tamper (simulate by altering downloaded file after fetch to ensure detection? or mock remote returning wrong bytes) -> failure.
+New CLI command class snapshot_delete (name() returns snapshot.delete).
+Usage: tsnap snapshot delete <uid|prefix>
+Resolves prefix via existing snapshot_manager->resolve_uid(prefix,'local').
+If ambiguous: exit code 64 (usage) with concise error.
+If not found: exit code 2 (validation).
+On success: remove directory snaps/<uid>/ recursively, update index.json (remove entry), return exit code 0.</uid>
+JSON output: { deleted_uid, index_pruned:true, size_bytes?:<int|null> } command field snapshot.delete.
+Text output: deleted <uid> (<bytes> bytes) – bytes optional if determinable by summing files under snapshot dir pre-removal.</bytes></uid>
+Idempotency: second attempt returns not found (exit 2).
+Tests covering success, ambiguous, not found, idempotent second delete, JSON parity.
+Scope (Out):
+Bulk deletion (multi-UID).
+Remote snapshot deletion.
+Interactive confirmations / trash bin.
+Retention policy logic (future ticket).
+Concurrency lock.
+Implementation Sketch:
+Add snapshot_manager->delete(string $uid): array|false returning ['uid'=>..., 'bytes'=>int] or false if not found.
+Implement recursive delete (depth-first, ignore transient file errors only after attempt; fail fast if directory removal fails).
+After successful directory removal, call index_manager to rebuild or prune entry (remove entry by UID then atomic write).
+New command snapshot_delete: parse argument; run resolution; call delete; aggregate metrics; output JSON + text.
+Register in tsnap_cli.php (snapshot group).
+Ensure output_formatter JSON canonical command = snapshot.delete.
 Data Structures / Schemas:
- - import_provenance_remote.json {original_uid, imported_uid, strategy, source_remote, original_manifest_sha256?, imported_utc, source_type:"manifest-v2"|"meta-v1"}.
- - RemotePullResult (array) {success, original_uid, final_uid, files, bytes, verified, provenance_path?}.
-File Targets: src/cli/commands/remote_pull.php (new), src/remote/remote_pull_service.php (new), modify command_router.php, possibly extend remote listing helper, tests/Remote/RemotePull*.
-Testing & Validation: PHPUnit tests with fake_storage implementing list/get and controllable object contents; verify hash mismatch triggers failure; ensure new uid path produces provenance file; ensure force overwrites.
+index.json unchanged.
+No new schema files.
+Tests:
+SnapshotDeleteTest: creates two snapshots; delete one; verify absent in subsequent list.
+AmbiguousPrefixTest: two snapshots with shared starting chars; attempt short prefix -> exit 64.
+NotFoundTest: random UID -> exit 2.
+IdempotentTest: deleting same UID again -> exit 2.
+JsonOutputTest: --json mode includes command snapshot.delete and deleted_uid.
+Documentation:
+README: Add subsection “Delete a snapshot” with example.
+No ticket cross-references needed.
 Acceptance Criteria:
- - remote pull downloads snapshot into local snapshots/<uid> or new uid when requested.
- - Integrity verified when manifest present; mismatches abort and cleanup temp.
- - meta-only remote snapshot yields synthesized manifest-v2.json locally.
- - Provenance file written only on uid-strategy=new.
- - No secret logging (inspect test output).
- - Command JSON output matches spec.
-Edge Cases: Ambiguous prefix (error); missing snapshot (error); zero-byte file; manifest lists file absent remotely (error & abort); local dir already exists (error unless --force keep or new strategy different uid).
-Rollback Strategy: Revert commit.
-Risks & Mitigations: Large snapshots memory—use streaming; partial failure leaves temp dir—cleanup on exception.
-Follow-Up Tasks: Future push, differential sync.
-Time Estimate: M.
-Deliverables: RemotePullService, CLI command, tests, updated docs/remotes.md (add pull usage).
-Agent Execution Checklist:
- - [ ] Implement service
- - [ ] Add CLI command & router entry
- - [ ] Add tests (manifest, meta-only, new uid, force, mismatch, ambiguous)
- - [ ] Update docs/remotes.md
- - [ ] Run tests & commit (T14I feat(remote): pull snapshot)
-
-====================================================================================================================
-T14J Snapshot List Remote Integration (Remote Enumeration in snapshot list)
-====================================================================================================================
-ID: T14J
-Title: snapshot list --remote (Enumerate Remote Snapshots via S3)
-Development Context Prompt (repeat for this ticket):
-Integrate remote listing into snapshot list command with minimal code. Use existing remote configs. Streaming list (paginate via batch fetch of object keys). No caching layer. Commit "T14J feat(remote): snapshot list integration". Keep diff small: reuse helper functions where possible; no speculative abstractions.
-Project Name: Snappy
-Project Purpose: (Universal Context)
-Rewrite Note: Separated from T14F to keep earlier remote config change small; this mirrors git’s incremental feature addition philosophy.
-Context Recap: Remote configurations exist (T14F). Need to allow developers to view snapshots stored in remote S3 buckets without local download.
-Objective: Extend snapshot list command with --remote <name> to list remote snapshots (uid, created, message first line, size if derivable) by scanning snaps/<uid>/manifest-v2.json or meta.json fallback.
-Rationale: Enables discovery of remotely published snapshots; essential for deciding which to pull (T14I) or share further.
-Dependencies: T14F (remote config), T14B (manifest freeze), T14C (IntegrityService not strictly required but available).
-Preconditions: At least one remote configured; remote bucket accessible; PHP has network access.
+Command available and discoverable in help (group: Snapshot).
+Behavior & exit codes match spec.
+Index entry removed exactly once.
+JSON/text outputs correct and canonical name emitted.
+All tests (existing + new) green.
+Edge Cases:
+Partial removal failure (permissions) → exit 1 (generic error).
+Directory missing after resolution (race) → treat as not found (exit 2).
+Very large snapshot: still streaming deletion; memory constant.
+Risks & Mitigations:
+Ambiguous prefix deletion risk → explicit fail on ambiguity.
+Time-of-check/time-of-use race → best-effort; if directory disappears during removal treat as not found.
+Rollback Strategy: Revert commit; no data migration. Deleted snapshots cannot be restored by tooling (documented).
+Time Estimate: S (small).
+Deliverables:
+snapshot_delete command class
+snapshot_manager delete method
+tsnap_cli.php registration
+Tests
+README update
+Commit Message: T15A feat(snapshot): add snapshot delete command
+Agent Execution Checklist: <input></input> Add delete method to snapshot_manager <input></input> Implement snapshot_delete command <input></input> Register command in tsnap_cli.php <input></input> Add tests (success/ambiguous/notfound/idempotent/json) <input></input> Update README <input></input> Run full PHPUnit <input></input> Commit (T15A feat(snapshot): add snapshot delete command)
+<hr></hr>
+ ===================================================Ticket ID: T15B Title: Snapshot Module Refactor (Separation of Concerns) Objective: Refactor snapshot subsystem for readability & maintainability by extracting creation, resolution, and deletion responsibilities into dedicated classes without altering observable behavior.
+Context: snapshot_manager currently combines:
+Creation workflow (dump provider selection, manifest writing, index updating)
+UID resolution & ambiguity handling
+(New from T15A) deletion logic
+Listing & manifest access Coupling obstructs future enhancements (retention, differential exports, faster indexing). Tests cover current behaviors allowing safe structural change.
+Rationale: Reduce complexity, isolate change impact, prepare for retention/prune and concurrency features.
+Dependencies: Stable test suite; T15A (if merged) to relocate delete logic.
+Preconditions: All snapshot commands functional; no pending structural tickets overlapping.
 Scope (In):
- - Flag: snapshot list --remote <name> [--limit N] [--full]
- - S3 listing: list objects with prefix snaps/ (cap *roughly* 20x limit then filter) to minimize requests.
- - For each candidate directory (snaps/<uid>/): attempt to fetch manifest-v2.json first; fallback to meta.json.
- - Extract fields: uid, created_utc (or created), message (first line unless --full then replace newlines with ' | '), snapshot_type, size_total_bytes (if available), optional tags (ignored in output for simplicity now).
- - Output formatting consistent with local list; distinguish remote mode (e.g. add column REMOTE=remoteName or annotate in JSON).
- - JSON output: {remote:"name", snapshots:[...]} preserving existing local schema plus remote.
- - Error handling: remote not found -> usage error; network/list error -> non-zero with message; partial failures (corrupt manifest) skip entry with warning (unless all fail -> error).
-Scope (Out): Multi-remote aggregation, caching, parallel forks, progress display, colorization changes.
-Implementation Steps:
- 1. Modify snapshot_list command to parse --remote flag (mutually exclusive with local listing; if provided ignore local).
- 2. Implement simple RemoteLister (src/remote/remote_lister.php) encapsulating listing & manifest/meta fetch logic returning normalized array.
-  2a. Normalization: {uid, created, type, message, size_bytes?}
- 3. Inject RemoteLister into command (construct on demand to keep wiring simple).
- 4. Add tests: RemoteListEmptyTest (no snapshots), RemoteListWithManifestsTest, RemoteListFallbackMetaTest (only meta.json), RemoteListCorruptManifestSkipsTest, RemoteListLimitTest.
- 5. Update docs/remotes.md with usage examples.
-Data Structures: RemoteLister::list(RemoteConfig $cfg, int $limit, bool $full): array.
-File Targets: snapshot_list command file, src/remote/remote_lister.php (new), tests/Remote/RemoteListSnapshotsTest.php (and variants), docs/remotes.md.
-Testing & Validation: Fake S3 storage stub to supply objects & JSON bodies; ensure limit enforced; ensure message truncation vs full.
+Introduce src/snapshot/core/:
+snapshot_creator (create logic; orchestrates dump provider, files, manifest, index update)
+snapshot_resolver (resolve_uid, ambiguity detection)
+snapshot_deleter (delete logic from T15A)
+Introduce src/snapshot/provider/ relocation of existing provider classes (dump_provider_interface, dump_provider_resolver, fake_dump_provider, tdb_dump_provider).
+snapshot_manager becomes façade delegating to new components; public method signatures unchanged.
+snappy_autoload.php updated for new directories.
+Adjust imports in commands/tests accordingly.
+Add minimal unit test (SnapshotFacadeRefactorTest) asserting create + resolve + show still functional (smoke).
+Scope (Out):
+Behavior changes or new features.
+Performance optimizations.
+Renaming public CLI commands or output changes.
+Schema alterations.
+Implementation Sketch:
+Create new directories.
+Move provider classes (update namespaces).
+Extract create() internals to snapshot_creator::create(...) returning uid & metadata.
+Extract resolve_uid() logic to snapshot_resolver.
+Extract delete() to snapshot_deleter (if present).
+snapshot_manager composes instances (lazy or constructor).
+Update commands (snapshot_create, snapshot_delete, others) to continue calling snapshot_manager only (no direct use of new classes).
+Run entire suite after each stage.
+Data Structures: Unchanged.
+Tests:
+Existing snapshot tests must pass unchanged.
+New structural smoke test verifying outputs (not asserting internal class presence, just behavior).
+Ensure no changes to JSON payload schemas.
+Documentation:
+Optional note in refactor_notes.md summarizing LOC and class extraction (brief).
 Acceptance Criteria:
- - snapshot list --remote <name> prints expected table / JSON.
- - Limit respected; corrupted entries skipped with warning (still exit 0 if at least one good entry or zero legitimate snapshots). If all entries unreadable -> non-zero.
- - No secret leakage (assert test output).
- - Local listing behavior unchanged when --remote absent.
-Edge Cases: Empty bucket; manifest present but missing fields; meta.json missing message -> display empty; large message truncated properly.
-Rollback Strategy: Revert commit.
-Risks & Mitigations: Performance for huge buckets -> initial overscan factor; documented future caching.
-Follow-Up Tasks: T14I remote pull (download) leverages same normalization.
+All tests green; zero diff in command outputs except possibly order of internal debug lines (none printed in production).
+snapshot_manager file size reduced; responsibilities delegated.
+Edge Cases: Namespace autoload breakage—caught by failing tests.
+Risks & Mitigations: Hidden logic difference—tests ensure parity. Autoload misconfiguration—adjust snappy_autoload.php early.
+Rollback Strategy: Revert commit; restore original snapshot_manager.
+Time Estimate: M (medium).
+Deliverables:
+New core & provider directories/classes
+Updated snapshot_manager
+Autoloader adjustments
+Smoke test
+Refactor note
+Commit Message: T15B feat(snapshot): refactor snapshot module into core/provider components
+Agent Execution Checklist: <input></input> Create directories core/ & provider/ <input></input> Move provider classes & update namespaces <input></input> Extract creator/resolver/deleter classes <input></input> Refactor snapshot_manager to delegate <input></input> Update autoloader <input></input> Add smoke test <input></input> Run full PHPUnit <input></input> Commit (T15B feat(snapshot): refactor snapshot module)
+<hr></hr>
+ ===================================================Ticket ID: T15C Title: Project Review (Architecture & Roadmap Foundation) Objective: Produce comprehensive review document (docs/review.md) analyzing architecture, strengths, weaknesses, risks, and improvement opportunities (sections 1–8).
+Context: Project matured through snapshot lifecycle (create/list/show/export/import/metrics/share/aliases/config/remote). Structural clarity and forward planning needed before deeper features (retention, concurrency, validation CLI).
+Rationale: Establish data-driven roadmap; reduce ad-hoc decisions; align future tickets.
+Dependencies: None (pure documentation).
+Preconditions: Current code builds & tests green.
+Scope (In):
+Create docs/review.md with sections:
+Overview
+Architecture Layering (CLI, snapshot, share, remote, config, util, support)
+Strengths
+Weaknesses
+Gaps / Missing Capabilities
+Risks (technical, operational, security)
+Recommendations (Short, Medium, Long term)
+Seed Ticket List (bulleted)
+Evidence: cite representative files (brief, no large code quotes).
+Run tests for baseline sanity.
+Scope (Out):
+Code changes.
+Prioritization locking (recommendations only).
+Implementation Sketch: Draft by inspection; ensure actionable phrasing (“Introduce advisory lock layer”, not vague).
+Tests: None (documentation only); full suite still run to confirm no incidental breakage.
+Documentation: review.md only; optional README link (one-liner “See docs/review.md”).
+Acceptance Criteria: review.md present; sections complete; at least 5 Short, 5 Medium, 3 Long recommendations.
+Edge Cases: N/A (doc only).
+Risks & Mitigations: Subjectivity → mitigate by referencing concrete modules.
+Rollback Strategy: Delete review.md.
 Time Estimate: S.
-Deliverables: Remote listing integration; tests; docs update.
-Agent Execution Checklist:
- - [ ] Implement RemoteLister
- - [ ] Extend snapshot_list command
- - [ ] Add tests (manifests, meta fallback, corrupt skip, limit)
- - [ ] Update docs/remotes.md
- - [ ] Run tests & commit (T14J feat(remote): snapshot list integration)
+Deliverables: review.md (sections 1–8).
+Commit Message: T15C docs(review): add holistic project assessment
+Agent Execution Checklist: <input></input> Inspect codebase <input></input> Draft review.md <input></input> (Optional) Link from README <input></input> Run full PHPUnit <input></input> Commit (T15C docs(review): add holistic project assessment)
+<hr></hr>
+ ===================================================Ticket ID: T15D Title: Technical Deep-Dive (Performance, Integrity, Concurrency) Objective: Expand review.md with Section 9 Technical Deep-Dive analyzing streaming patterns, integrity guarantees, complexity, concurrency assumptions, error handling, extensibility, security posture.
+Context: Following high-level review (T15C), deeper systematic engineering appraisal needed to justify optimization & safety tasks.
+Rationale: Identify hot paths & structural risks before adding retention, locks, differential exports.
+Dependencies: T15C review.md exists.
+Preconditions: Existing tests pass.
+Scope (In): Add Section 9 to review.md with subsections: 9.1 Streaming & Memory (per operation; buffers) 9.2 Hashing & Integrity Flow 9.3 Complexity (Big-O for create, list, export, import, delete) 9.4 Concurrency & Atomicity (where atomic, where not) 9.5 Error Handling Patterns 9.6 Configuration & Persistence 9.7 Extensibility Hooks 9.8 Security Posture (credentials, injection risk) 9.9 Hotspot Candidates / Proposed Benchmarks
+Scope (Out): Implementing improvements.
+Implementation Sketch: Analyze code paths; derive complexity (e.g., list O(n) snapshots, export O(f) files, etc.); document atomic rename usage.
+Tests: None (doc); run suite for assurance.
+Acceptance Criteria: All subsections filled with specific, actionable points and at least 6 hotspot items.
+Edge Cases: N/A.
+Risks & Mitigations: Over-detail → keep concise bullet style.
+Rollback Strategy: Remove added section.
+Time Estimate: S.
+Deliverables: Updated review.md with Section 9.
+Commit Message: T15D docs(review): add technical deep-dive section
+Agent Execution Checklist: <input></input> Analyze code paths <input></input> Append Section 9 <input></input> Run full PHPUnit <input></input> Commit (T15D docs(review): add technical deep-dive section)
+<hr></hr>
+ ===================================================Ticket ID: T15E Title: Usability Review (CLI & Developer UX) Objective: Evaluate all CLI commands + aliases; append Section 10 Usability Review to review.md with table (Command | Strengths | Issues | Recommendations).
+Context: Commands: snapshot (create/list/show/export/import/delete/metrics), share (create/import), remote (add/list/remove/pull), config (get/set), gc (objects/temp), alias (future), help & root aliases (create/list/show). Need systematic UX evaluation.
+Rationale: Improve consistency & clarity before expanding surface area (alias management, validation).
+Dependencies: review.md with Sections 1–9.
+Preconditions: All commands working.
+Scope (In):
+Manual execution in isolated temp environment for each command (text + JSON).
+Table summarizing each command group.
+Identify at least one improvement per command group.
+Add suggestions for wording, error codes, help enhancements, alias discoverability.
+Scope (Out): Implementing improvements.
+Implementation Sketch: Create matrix; run commands; capture representative outputs; synthesize into concise table.
+Tests: None (doc).
+Acceptance Criteria: Section 10 present with table and actionable recommendations.
+Edge Cases: N/A.
+Risks: Subjectivity → ground recommendations in observed output.
+Rollback: Remove section.
+Time Estimate: S.
+Deliverables: Updated review.md (Section 10).
+Commit Message: T15E docs(review): add CLI usability assessment
+Agent Execution Checklist: <input></input> Run each command (text & JSON) <input></input> Build table & recommendations <input></input> Append Section 10 <input></input> Run full PHPUnit <input></input> Commit (T15E docs(review): add CLI usability assessment)
+<hr></hr>
+ ===================================================Ticket ID: T15F Title: Ticket Synthesis from Reviews Objective: Translate review.md Sections 7, 9, 10 recommendations into a set of 8–15 future ticket stubs (T16A+), appended to full_tickets.md ahead of backlog.
+Context: Reviews identified structured improvements; need formalized backlog entries.
+Rationale: Operationalize analysis → actionable roadmap.
+Dependencies: Completion of T15C, T15D, T15E (review.md populated).
+Preconditions: review.md includes recommendations.
+Scope (In):
+Parse recommendations.
+Create stubs: ID (T16A ... sequential), Title, Objective, Rationale, Scope (In/Out), Acceptance Criteria, Time Estimate (S/M/L).
+Append to full_tickets.md just before Backlog / Stretch.
+Scope (Out): Detailed implementation specs (stubs only). Implementations themselves.
+Implementation Sketch: Enumerate recommendations, cluster by theme (integrity, UX, performance, security), assign IDs.
+Tests: None.
+Acceptance Criteria: 8–15 stubs added; IDs unique; no other edits.
+Edge Cases: Less than 8 actionable items → combine or refine until minimum met.
+Risks: Overlapping scopes → ensure each distinct.
+Rollback: Remove stubs.
+Time Estimate: S.
+Deliverables: Updated full_tickets.md (stubs inserted).
+Commit Message: T15F docs(planning): synthesize improvement ticket stubs
+Agent Execution Checklist: <input></input> Extract recs from review.md <input></input> Draft stubs T16A+ <input></input> Insert into full_tickets.md <input></input> Run full PHPUnit <input></input> Commit (T15F docs(planning): synthesize improvement ticket stubs)
+<hr></hr>
+ ===================================================Ticket ID: T15G Title: Snapshot Retention & Prune Policy (Specification / Optional Implementation) Objective: Define (and optionally implement) a retention policy system to automatically prune snapshots (e.g., keep last N, keep daily for 7 days, weekly for 8 weeks). Initial scope: specification only unless explicitly toggled to implement.
+Context: Deletion (T15A) manual; disk growth uncontrolled; need policy abstraction decoupled from ad-hoc shell scripts.
+Rationale: Provide deterministic, auditable pruning with dry-run evaluation.
+Dependencies: T15A (delete), snapshot_manager listing, index_manager.
+Preconditions: Snapshots enumerated reliably; deletion safe.
+Scope (In) – Spec Phase (default):
+Document policy grammar (YAML or inline expression) e.g. keep:last=30,keep:daily=7,keep:weekly=8.
+Define evaluation algorithm (sort by created desc → classify).
+Outline CLI: tsnap snapshot prune [--policy='...'] [--policy-file=path] [--dry-run]
+Dry-run output: list of candidate deletions with size total & summary.
+JSON schema for output.
+Identify exit codes (0 success, 64 usage, 2 invalid policy). If Implementation Approved:
+Implement parser + evaluator.
+Integrate with snapshot_manager & deletion.
+Add tests for policy evaluation & dry-run vs real run.
+Scope (Out): Remote pruning; time zone manipulation; partial retention per type beyond placeholders.
+Implementation Sketch (If Implementing): Policy parse → evaluate snapshot groups → mark final survivors → produce deletion set; dry-run prints; non-dry-run executes deletes sequentially.
+Tests:
+Policy parsing (valid/invalid).
+Dry-run candidate list correctness.
+Execution reduces snapshot count accordingly.
+JSON mode parity.
+Acceptance Criteria (Spec): Document produced & committed. Acceptance Criteria (Implementation): All tests green; command outputs match spec.
+Edge Cases: Fewer snapshots than retention requirements (delete none). Ambiguous policy definitions (error).
+Risks & Mitigations: Accidental deletion → dry-run strongly encouraged; ambiguous policies rejected.
+Rollback Strategy: Remove command & doc; no persistent state.
+Time Estimate: S (spec), L (implementation).
+Deliverables: Spec doc OR implemented command + tests.
+Commit Message: T15G docs(spec): snapshot retention policy (if spec) OR T15G feat(snapshot): implement retention prune command
+Agent Execution Checklist (Spec): <input></input> Draft spec doc <input></input> Add to docs/ <input></input> Run tests <input></input> Commit (Implementation adds: code, tests, registration)
+<hr></hr>
+ ===================================================Ticket ID: T15H Title: Benchmark & Performance Harness Objective: Add reproducible benchmarking scripts to measure snapshot create/export/import/delete metrics and memory usage using synthetic datasets.
+Context: Before optimization (locks, retention), need baseline timing & memory to detect regressions.
+Rationale: Enable quantitative evaluation & future performance targets.
+Dependencies: Stable snapshot lifecycle.
+Preconditions: FAKE dump mechanism available (SNAPPY_FAKE_DUMP) for controlled size generation.
+Scope (In):
+benchmark/ directory with PHP scripts:
+bench_create.php (loop N snapshots with configurable message size)
+bench_export_import.php
+bench_full_cycle.php
+Each script outputs JSON lines: {op, count, elapsed_ms, rss_bytes, avg_ms_per_op}
+README section “Benchmarks” describing usage & environment variables (BENCH_SNAPSHOT_COUNT, BENCH_DUMP_SIZE_KB).
+Optional helper to aggregate results.
+Scope (Out): Automated CI gating; external profiling integration.
+Implementation Sketch: Use hrtime(true) and memory_get_usage(); isolate temp root per run; warm-up once.
+Tests: Minimal (invoke scripts with very small N to ensure non-fatal) – optional; not full performance assertions.
+Acceptance Criteria: Scripts run locally producing structured JSON; documentation clear.
+Edge Cases: Large N causing long runtime—document recommended limits.
+Risks: Misuse in production env → clearly mark “DEV / BENCH USE ONLY”.
+Rollback: Remove benchmark/ directory.
+Time Estimate: M.
+Deliverables: benchmark scripts + README changes.
+Commit Message: T15H feat(benchmark): add snapshot performance harness
+Agent Execution Checklist: <input></input> Create benchmark scripts <input></input> Update README <input></input> (Optional) Add smoke test <input></input> Run full PHPUnit <input></input> Commit (T15H feat(benchmark): add snapshot performance harness)
+<hr></hr>
+ ===================================================Ticket ID: T15I Title: Concurrency Guard (Advisory File Locking) Objective: Introduce advisory locking to prevent concurrent mutating operations (create/delete/export/import) from colliding and corrupting index or partial artifacts.
+Context: No locks currently; simultaneous operations risk race conditions (index truncation, partial delete mid-export).
+Rationale: Improve integrity reliability under parallel invocations (CI or multi-shell use).
+Dependencies: snapshot_manager mutation paths; index_manager atomic writes.
+Preconditions: Filesystem supports flock (POSIX).
+Scope (In):
+lock_manager (src/support/process/lock_manager.php) implementing acquire($name), release().
+Use single global lock file at $SNAPPY_SNAPSHOT_BASE/.lock OR separate names per operation if justified (“snapshot_mutation”).
+Wrap create/delete/export/import calls (CLI entrypoint before action).
+On busy lock: exit code 65 (document).
+JSON output: {error: “operation locked”, lock: name}.
+Tests: simulated contention (fork or second process invocation) verifying second fails fast.
+Scope (Out): Cross-host distributed locking; read/write lock distinction.
+Implementation Sketch:
+lock_manager uses fopen + flock(LOCK_EX|LOCK_NB).
+Acquire at start of each mutating command run(); ensure try/finally release.
+Provide helper in context or utility function.
+Data Structures: None new beyond lock file.
+Tests:
+Contention test (spawn background php creating lock then attempt second command).
+Normal path unaffected.
+Acceptance Criteria: Mutating operations mutually exclusive; non-mutating commands (list/show/metrics) unaffected.
+Edge Cases: Stale lock file after crash—flock semantics auto-release on process exit.
+Risks & Mitigations: Over-serialization → acceptable initial tradeoff.
+Rollback Strategy: Remove lock usage.
+Time Estimate: M.
+Deliverables: lock_manager, command updates, tests, doc note.
+Commit Message: T15I feat(concurrency): add advisory lock for snapshot mutations
+Agent Execution Checklist: <input></input> Implement lock_manager <input></input> Integrate into mutating commands <input></input> Add contention test <input></input> Update README (Concurrency) <input></input> Run full PHPUnit <input></input> Commit (T15I feat(concurrency): add advisory lock)
+<hr></hr>
+ ===================================================Ticket ID: T15J Title: Error Code Catalog & Consistency Audit Objective: Document and standardize CLI exit codes across commands; produce docs/error_codes.md; align inconsistent usages.
+Context: Exit codes (usage=64, validation=2, generic=1, etc.) appear but not centrally documented; future automation benefits from stable mapping.
+Rationale: Predictable scripting & monitoring; reduces future divergence.
+Dependencies: Existing commands.
+Preconditions: Working suite.
+Scope (In):
+Enumerate current exit codes per command.
+Map constants (if any) to meaning.
+Adjust obvious inconsistencies (e.g., ambiguous prefix vs not found).
+Provide docs/error_codes.md with table: Code | Meaning | Example Command / Scenario.
+Minor updates to commands to standardize.
+Scope (Out): Adding new codes beyond rationalization.
+Implementation Sketch: Scan tests for expected codes; update mismatches; minimal edits for message consistency.
+Tests: Adjust assertions if needed (update tests expecting old codes).
+Acceptance Criteria: Doc complete; all tests green; no unreferenced codes used.
+Edge Cases: Legacy codes desired to stay—retain if not harmful.
+Risks & Mitigations: Breaking consumer scripts—document changes clearly in doc.
+Rollback: Revert doc + code changes.
+Time Estimate: S.
+Deliverables: error_codes.md + code adjustments.
+Commit Message: T15J docs(error-codes): catalog and align exit codes
+Agent Execution Checklist: <input></input> Inventory codes <input></input> Adjust command returns <input></input> Create error_codes.md <input></input> Update tests <input></input> Run full PHPUnit <input></input> Commit (T15J docs(error-codes): catalog and align exit codes)
+<hr></hr>
+ ===================================================Ticket ID: T15K Title: Security Posture Review & Secret Handling Audit Objective: Analyze credential & secret handling, logging exposure risks, propose mitigations, and optionally implement a central redaction helper.
+Context: Remote configs store key/secret; outputs attempt redaction; need explicit confirmation no leakage paths (errors, exceptions, debug logs).
+Rationale: Prevent inadvertent secret exposure early; baseline before remote push/pull or signing.
+Dependencies: remote_add/list/remove, config_manager, output_formatter.
+Preconditions: Stable code.
+Scope (In):
+Add section to review.md or new doc security_review.md:
+Secret Storage Locations
+Redaction Paths
+Potential Leakage Vectors (error messages, stack traces suppressed anyway)
+Proposed Mitigations (central helper redact($value))
+Future Hardening (rotation hooks)
+Optional implement util/redact.php with redact(string $s): string (hash / fixed placeholder) and apply in remote list / error contexts.
+Scope (Out): Encryption at rest, key rotation implementation.
+Implementation Sketch: Survey code for echo/fwrite containing “secret”, “key”.
+Tests: If helper added, ensure remote list still redacts properly.
+Acceptance Criteria: Documentation produced; if helper added, tests still green; no new exposure identified.
+Edge Cases: User intentionally sets key in snapshot message (out-of-scope).
+Risks: Over-redaction reducing usability → only redact known secret fields.
+Rollback: Remove helper/doc.
+Time Estimate: S.
+Deliverables: Doc (+ optional helper & minimal integration).
+Commit Message: T15K docs(security): add security posture review (or feat if helper added)
+Agent Execution Checklist: <input></input> Survey code paths <input></input> Draft doc/section <input></input> (Optional) Add redact helper & integrate <input></input> Run full PHPUnit <input></input> Commit (T15K docs(security): security posture review)
+<hr></hr>
+ ===================================================Ticket ID: T15L Title: Snapshot Restore Consistency Specification Objective: Define specification (no implementation) for snapshot restore command applying a snapshot’s SQL (and future assets) to a target database environment safely and deterministically.
+Context: Lifecycle currently ends at import; applying to DB often manual; future restore requires structured plan aligning with existing deterministic, streaming principles.
+Rationale: Prevent ad-hoc restore feature; plan safety (dry-run preview, idempotency guard).
+Dependencies: snapshot_manager (manifest/file access), potential DB driver (out-of-scope now).
+Preconditions: Snapshots contain SQL dumps (backup.sql[.gz]).
+Scope (In): Spec Document:
+Proposed command: tsnap snapshot restore <uid|prefix> [--dry-run] [--db-url=DSN] [--strategy=replace|fail-if-exists]
+Dry-run: manifest introspection only; show size, estimated statements count (optional).
+Output JSON schema (plan vs executed).
+Exit codes: 0 success, 64 usage, 3 restore conflict, 2 not found, 1 execution error.
+Safety: confirmation flag (maybe future). Scope (Out): Actual DB execution; multi-engine restore logic.
+Implementation Sketch: Document streaming decompress + pipe to DB client approach (no memory load).
+Tests: None (spec only).
+Acceptance Criteria: Spec integrated in docs/ (restore_spec.md or added to review.md recommendations).
+Risks: Spec drift if delayed—mitigate by anchoring to manifest fields.
+Rollback: Remove spec file.
+Time Estimate: M.
+Deliverables: restore_spec.md (or section) with all above.
+Commit Message: T15L docs(spec): snapshot restore command design
+Agent Execution Checklist: <input></input> Draft restore spec <input></input> Add to docs/ <input></input> Run tests <input></input> Commit (T15L docs(spec): snapshot restore command design)
+<hr></hr>
+ ===================================================Ticket ID: T15M Title: Alias Management Command (List/Add/Remove) Objective: Provide first-class alias management via CLI (alias list/add/remove) for root snapshot command aliases currently configured through config set.
+Context: Aliases presently configured by editing config (aliases.*). Managing via explicit commands improves discoverability and consistency (notably after default root aliases create/list/show).
+Rationale: Enhance UX, reduce manual config editing complexity, ensure validation (only snapshot.* targets).
+Dependencies: command_router alias support, config_manager.
+Preconditions: Existing alias system functioning; config persists aliases.* keys.
+Scope (In):
+Commands:
+alias list -> lists current alias mappings (text table + JSON).
+alias add <alias> <snapshot.command></alias>
+alias remove <alias></alias>
+Validation: canonical must start with snapshot.; alias must be lowercase ^[a-z][a-z0-9_-]*$; reject collisions with existing primary groups (snapshot, remote, share, gc, config, alias).
+Update help root grouping (Aliases section includes management commands).
+JSON output consistent: command field alias.list / alias.add / alias.remove.
+Tests: add/list/remove lifecycle; invalid target; collision; JSON parity.
+Scope (Out): Bulk import/export of aliases; editing existing alias without remove/add pattern.
+Implementation Sketch:
+alias_list, alias_add, alias_remove command classes.
+In add: modify config->set('aliases.<alias>', 'snapshot.xxx', true).</alias>
+In remove: set to null (remove key) or use config->remove path.
+Refresh alias registration only occurs at next process start (document) OR (optional) re-register in-process after change (in-scope if trivial).
+Data Structures: Reuse config aliases.* object.
+Tests:
+Add new alias (metrics) then use alias command invocation.
+Remove alias; invocation now fails (unknown root verb).
+Invalid canonical (e.g., remote.list) exit 2.
+Documentation:
+README: “Managing aliases” section.
+Help: ensure displayed.
+Acceptance Criteria: All alias commands operational; existing default aliases preserved; tests green.
+Edge Cases: Adding alias identical to existing default -> update mapping. Removing non-existent alias -> exit 2 with error.
+Risks & Mitigations: User confusion about immediate availability—document re-run requirement if not hot-loaded.
+Rollback: Remove command classes and help entries.
+Time Estimate: S.
+Deliverables: Commands, tests, README section.
+Commit Message: T15M feat(cli): add alias management commands
+Agent Execution Checklist: <input></input> Implement alias_* commands <input></input> Register commands <input></input> Add tests <input></input> Update README <input></input> Run full PHPUnit <input></input> Commit (T15M feat(cli): add alias management commands)
+<hr></hr>
+ ===================================================Ticket ID: T15N Title: Manifest Validation CLI Objective: Add snapshot validate <uid|prefix> command to verify manifest integrity by recomputing file hashes & manifest canonical hash (streaming) and reporting mismatches.
+Context: Integrity currently implicit during import; post-import tampering detection missing; need on-demand check for CI / debugging.
+Rationale: Enhances trust; allows periodic audits; precondition for diff or retention actions.
+Dependencies: integrity_service (hashing), snapshot_manager, canonical_json.
+Preconditions: Snapshot artifact directory intact.
+Scope (In):
+Command snapshot validate <uid|prefix>
+Outputs (JSON): { uid, valid: bool, manifest_sha256_expected, manifest_sha256_actual, file_mismatches: [{name, expected, actual}], missing_files: [], extra_files: [] }
+Text: “valid” or per-line mismatch summary.
+Exit codes: 0 (valid), 3 (integrity mismatch), 2 (not found), 64 (usage).
+Streaming: do not load entire files.
+Support compressed backup.sql.gz detection (hash content uncompressed? Use existing stored hash semantics—if only size + stored checksum present, recompute same representation consistent with export logic).
+Scope (Out): Remote validation; artifact regeneration; auto-fix.
+Implementation Sketch:
+Resolve UID.
+Read manifest; canonicalize & hash; compare with stored checksums.
+Iterate files list; verify presence & sha256 (using integrity_service).
+Detect extra unexpected files (present not in manifest).
+Compile results.
+Tests:
+Valid snapshot returns valid.
+Tampered file (modify bytes) yields mismatch exit 3.
+Deleted file yields missing entry.
+Added extra file yields extra_files entry.
+Acceptance Criteria: Accurate detection; correct exit codes; JSON shape; streaming maintained.
+Edge Cases: Large files: maintain O(1) memory by chunk hashing.
+Risks & Mitigations: Hash mismatch due to earlier inconsistent canonicalization—use same canonical routine as export.
+Rollback: Remove command.
+Time Estimate: S.
+Deliverables: Command, tests.
+Commit Message: T15N feat(snapshot): add manifest validation command
+Agent Execution Checklist: <input></input> Implement validate command <input></input> Add hashing logic (reuse integrity_service) <input></input> Add tests (valid/tampered/missing/extra) <input></input> Update help <input></input> Run full PHPUnit <input></input> Commit (T15N feat(snapshot): add manifest validation command)
+<hr></hr>
+ ===================================================Ticket ID: T15O Title: Manifest Schema Version Enforcement & Upgrade Objective: Detect outdated manifests or non-canonical ordering and optionally upgrade to canonical v2 (manifest-v2.json) while preserving semantic content.
+Context: Future schema evolution may require re-emission; early enforcement assists compatibility and validation tooling.
+Rationale: Maintain uniform canonical manifests enabling stable hashing & diff operations.
+Dependencies: canonical_json utility, existing manifest structure (schema_version=2 baseline).
+Preconditions: Snapshots exist; some may have non-canonical key ordering if produced by earlier versions.
+Scope (In):
+Command snapshot schema-enforce <uid|prefix> [--upgrade]
+Without --upgrade: report status { canonical: bool, required_version:2, current_version, differences:[] } (differences as list of structural variances: key_order, missing_keys).
+With --upgrade: rewrite manifest-v2.json atomically using canonical ordering & stable formatting.
+JSON & text outputs.
+Exit codes: 0 (canonical OK), 6 (non-canonical / outdated), 2 (not found), 64 (usage), 1 (upgrade failure).
+On upgrade produce backup manifest-v2.json.bak (single copy, overwritten on next upgrade attempt).
+Scope (Out): Downgrade; multi-version migration logic (only to v2).
+Implementation Sketch:
+Resolve UID.
+Load manifest; canonicalize; compare raw file content vs canonical JSON (normalized newline).
+If non-canonical and --upgrade provided: write temp file + rename; backup original first.
+Re-hash if needed? (Hash field inside manifest not defined as golden—if golden exists ensure recomputation consistent with spec.)
+Data Structures: No change; may add upgrade meta file (optional) skipped here.
+Tests:
+Non-canonical fabricated manifest corrected on upgrade.
+Canonical manifest no-op upgrade (exit 0).
+Not found case.
+JSON difference listing.
+Acceptance Criteria: Accurate detection; safe canonical rewrite; tests green; no other side effects.
+Edge Cases: Read-only filesystem (exit 1 upgrade failure). Corrupt JSON (exit 6 with parse warning).
+Risks & Mitigations: Incorrect rewrite altering semantics — test freeze ensures equivalence aside from ordering.
+Rollback: Revert command & code.
+Time Estimate: M.
+Deliverables: Command, tests.
+Commit Message: T15O feat(snapshot): add manifest schema enforcement & upgrade
+Agent Execution Checklist: <input></input> Implement schema-enforce command <input></input> Add canonical comparison <input></input> Implement upgrade logic with backup <input></input> Add tests (canonical/non-canonical/upgrade) <input></input> Run full PHPUnit <input></input> Commit (T15O feat(snapshot): add manifest schema enforcement & upgrade)
+<hr></hr>
+Suggested Additional Future Tickets (Optional Stubs)
+ ===================================================Ticket ID: T15P Title: Differential Export Prototype Objective: Spec for exporting only delta between two snapshots (file-level differences) to reduce artifact size.
+Scope (In): Spec doc (diff algorithm outline, hash-based manifest delta).
+Scope (Out): Implementation.
+Acceptance: Spec added.
+Time: M.
+ ===================================================Ticket ID: T15Q Title: Integrity Cache Warmup Objective: Cache hashed file digests post-create to speed future validation/diff operations.
+Scope (In): Optional integrity_cache.json per snapshot; update at create/export.
+Scope (Out): Cross-snapshot central DB.
+Acceptance: Cache file written & used; tests.
+Time: M.
+ ===================================================Ticket ID: T15R Title: Remote Push (Spec) Objective: Spec for authenticated upload of artifact to remote (S3-compatible).
+Scope (In): Auth handling, object key layout, conflict strategy.
+Scope (Out): Implementation.
+Acceptance: Spec documented.
+Time: M.
+
+
+
 
 ====================================================================================================================
 Backlog / Stretch (Concept Summaries, Not Formal Tickets)
