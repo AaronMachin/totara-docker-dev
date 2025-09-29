@@ -22,5 +22,13 @@ interface DumpProviderInterface {
      * @throws \Snappy\Support\Exception\ProcessFailedException on process failure.
      */
     public function dump(string $uid, string $targetDir, array $options = []): DumpResult;
-}
 
+    /**
+     * Apply (restore) a previously produced snapshot directory into the active developer database.
+     * Implementations must stream input and avoid loading entire dump into memory.
+     * @param string $snapshotDir Directory path containing backup.sql or backup.sql.gz
+     * @param array $options Provider options (registry etc.)
+     * @return DumpApplyResult
+     */
+    public function apply(string $snapshotDir, array $options = []): DumpApplyResult;
+}

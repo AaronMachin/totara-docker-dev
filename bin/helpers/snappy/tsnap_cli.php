@@ -39,8 +39,9 @@ $router->register('snapshot','metrics',new Snappy\Cli\Commands\snapshot_metrics(
 $router->register('snapshot','export', new Snappy\Cli\Commands\snapshot_export());
 $router->register('snapshot','import', new Snappy\Cli\Commands\snapshot_import());
 $router->register('snapshot','delete', new Snappy\Cli\Commands\snapshot_delete());
-// Configurable root aliases: default to create/list/show
-$aliasMap = ['create'=>'snapshot.create','list'=>'snapshot.list','show'=>'snapshot.show'];
+$router->register('snapshot','apply',  new Snappy\Cli\Commands\snapshot_apply());
+// Configurable root aliases: default to create/list/show/apply
+$aliasMap = ['create'=>'snapshot.create','list'=>'snapshot.list','show'=>'snapshot.show','apply'=>'snapshot.apply'];
 $configuredAliasMap = $config->get('aliases', null);
 
 if(is_array($configuredAliasMap)) {

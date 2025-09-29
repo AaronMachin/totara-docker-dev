@@ -9,6 +9,7 @@ Current Supported Commands
 --------------------------
 (snapshot.*)
 - snapshot create   Create a local SQL snapshot (optional --compress)
+- snapshot apply    Apply (restore) a local SQL snapshot to the developer database
 - snapshot list     List local snapshots (UID, created, type, first message line)
 - snapshot show     Show manifest details for a snapshot
 - snapshot metrics  Aggregate counts & basic age buckets (derived from local index)
@@ -30,12 +31,15 @@ Default built‑in aliases (auto‑loaded if none configured):
   create -> snapshot.create
   list   -> snapshot.list
   show   -> snapshot.show
+  apply  -> snapshot.apply
 Usage examples:
   tsnap create -m "initial load"
   tsnap list
   tsnap show <uid>
+  tsnap apply <uid>
 The canonical namespaced forms always remain available:
   tsnap snapshot create -m "initial load"
+  tsnap snapshot apply <uid>
 
 Configurable Aliases
 You can add (or override) aliases via config values. Each alias is stored under the aliases.<name> path with the value set to the canonical command name (group.sub form). Only snapshot.* targets are applied.
@@ -79,6 +83,8 @@ List snapshots:
   tsnap list
 Show details:
   tsnap show <uid>
+Apply (restore) a snapshot to your dev database:
+  tsnap apply <uid>
 Delete snapshot (safe removal + index prune):
   tsnap snapshot delete <uid|prefix>
 Metrics (once alias added):

@@ -22,10 +22,10 @@ final class AliasesTest extends AbstractCliTestCase {
     public function testAliasHelpSectionPresent(): void {
         $out = $this->runCli('help', $code);
         $this->assertSame(0,$code,$out);
-        foreach (['create','list','show'] as $alias) {
+        foreach (['create','list','show','apply'] as $alias) {
             $this->assertStringContainsString('  '.$alias.'  (tsnap snapshot '.$alias.')', $out, 'missing alias line for '.$alias.' in help output: '.$out);
         }
-        $this->assertSame(3, substr_count($out,'(tsnap snapshot '), 'expected exactly three default alias lines');
+        $this->assertSame(4, substr_count($out,'(tsnap snapshot '), 'expected exactly four default alias lines');
     }
 
     public function testAliasJsonCommandNames(): void {
