@@ -79,8 +79,8 @@ class command_router {
         // Group by group key
         $groups = [];
         foreach ($metaList as $m) { $groups[$m['group'] ?? 'Other'][] = $m; }
-        // Stable ordering: Snapshot, Remote, Maintenance, Config, Other, then alpha for any extras
-        $order = ['Snapshot','Remote','Maintenance','Config','Other'];
+        // Stable ordering: Snapshot, Share, Remote, Maintenance, Config, Other, then alpha for any extras
+        $order = ['Snapshot','Share','Remote','Maintenance','Config','Other'];
         $ordered = [];
         foreach ($order as $g) { if (isset($groups[$g])) { $ordered[$g] = $groups[$g]; unset($groups[$g]); } }
         ksort($groups, SORT_NATURAL | SORT_FLAG_CASE);

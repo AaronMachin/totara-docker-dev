@@ -41,6 +41,9 @@ $router->register('snapshot','show',   new Snappy\Cli\Commands\snapshot_show());
 $router->register('snapshot','metrics',new Snappy\Cli\Commands\snapshot_metrics());
 $router->register('snapshot','export', new Snappy\Cli\Commands\snapshot_export());
 $router->register('snapshot','import', new Snappy\Cli\Commands\snapshot_import());
+// Add share commands
+$router->register('share','create', new Snappy\Cli\Commands\share_share_create());
+$router->register('share','import', new Snappy\Cli\Commands\share_share_import());
 
 // Maintenance (gc) + Config + Remote
 $router->register('gc','objects',  new Snappy\Cli\Commands\gc_objects());
