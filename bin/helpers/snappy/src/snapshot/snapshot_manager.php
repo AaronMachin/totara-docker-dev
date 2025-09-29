@@ -35,6 +35,8 @@ class snapshot_manager {
             $manifest = $this->build_manifest_v2($uid,$type,$message,$meta,$compressionInfo);
             $this->write_manifest_v2($uid,$manifest);
             $this->write_meta('local',$uid,$meta);
+            // Generate metadata files (metadata providers) post-manifest
+            try { (new metadata_manager($this))->generate($uid); } catch (\Throwable $ignored) {}
             try { $this->indexManager?->addOrUpdate($uid); } catch (Throwable $e) {}
             return $uid;
         } catch (Throwable $e) {
