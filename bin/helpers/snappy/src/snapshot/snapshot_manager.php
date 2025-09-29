@@ -13,6 +13,7 @@ class snapshot_manager {
     private remote_registry $registry;
     private ?DumpProviderResolver $dumpResolver = null;
     private ?index_manager $indexManager = null;
+    private ?integrity_service $integrity = null;
 
     public function __construct(remote_registry $registry) { $this->registry = $registry; }
     public function registry(): remote_registry { return $this->registry; }
@@ -47,11 +48,13 @@ class snapshot_manager {
     private function temp_snapshot_dir(string $uid): string { $base=rtrim($this->registry->local_base_path(),'/'); $dir=$base.'/tmp/'.$uid; if(!is_dir($dir)){@mkdir($dir,0777,true);} return $dir; }
     private function local_snapshot_dir(string $uid): string { $base=$this->registry->local_base_path(); $dir=$base.'/snaps/'.$uid; if(!is_dir($dir)){@mkdir($dir,0777,true);} return $dir; }
 
+    private function integrity(): integrity_service { return $this->integrity ??= new integrity_service(); }
+
     private function create_sql_backup(string $uid, array &$meta, string $workDir): void {
         $provider = $this->dump_resolver()->resolve(['type'=>'sql']);
         $result = $provider->dump($uid,$workDir,['registry'=>$this->registry]);
         $files = $result->files(); if(!$files){ throw new ProcessFailedException('Dump provider produced no files'); }
-        foreach ($files as $file){ $name=$file['name']; $src=$file['path']; $dest=$workDir.'/'.$name; if(!is_file($src)) { throw new ProcessFailedException('Dump missing file '.$src);} if($src!==$dest){ if(!@copy($src,$dest)){ throw new ProcessFailedException('Copy failed'); } } $meta['files'][]=$name; $meta['file_checksums'][$name]=hash_file('sha256',$dest); }
+        foreach ($files as $file){ $name=$file['name']; $src=$file['path']; $dest=$workDir.'/'.$name; if(!is_file($src)) { throw new ProcessFailedException('Dump missing file '.$src);} if($src!==$dest){ if(!@copy($src,$dest)){ throw new ProcessFailedException('Copy failed'); } } $meta['files'][]=$name; $meta['file_checksums'][$name]=$this->integrity()->hashFile($dest); }
         $dumpMeta=$result->metadata(); if($dumpMeta){ $meta['dump_metadata']=$dumpMeta; }
     }
 
@@ -59,9 +62,9 @@ class snapshot_manager {
         $original=$workDir.'/backup.sql'; if(!is_file($original)) { return null; }
         $originalSize=filesize($original)?:0; $gzPath=$original.'.gz';
         $success=false; if(function_exists('gzopen')){ $in=@fopen($original,'rb'); $out=@gzopen($gzPath,'wb6'); if($in&&$out){ while(!feof($in)){ $c=fread($in,8192); if($c===false) break; if($c!==''){ gzwrite($out,$c);} } fclose($in); gzclose($out); $success=is_file($gzPath); } }
-        if(!$success){ $runner=new process_runner(); $gzipBin=trim((string)@shell_exec('command -v gzip 2>/dev/null'))?:'gzip'; $test=@shell_exec($gzipBin.' --version 2>/dev/null'); if($test){ $res=$runner->run([$gzipBin,'-c',$original]); if($res->exitCode===0){ file_put_contents($gzPath,$res->stdout); $success=true; } } }
+        if(!$success){ $runner=new process_runner(); $gzipBin=trim((string)@shell_exec('command -v gzip 2>/dev/null'))?:'gzip'; $test=@shell_exec($gzipBin . ' --version 2>/dev/null'); if($test){ $res=$runner->run([$gzipBin,'-c',$original]); if($res->exitCode===0){ file_put_contents($gzPath,$res->stdout); $success=true; } } }
         if(!$success||!is_file($gzPath)) { throw new ValidationException('Compression requested but no gzip capability available'); }
-        $compressedSize=filesize($gzPath)?:0; $ratio=$originalSize>0?($compressedSize/$originalSize):0.0; $checksum=hash_file('sha256',$gzPath);
+        $compressedSize=filesize($gzPath)?:0; $ratio=$originalSize>0?($compressedSize/$originalSize):0.0; $checksum=$this->integrity()->hashFile($gzPath);
         $newFiles=[]; foreach($meta['files'] as $f){ $newFiles[]=$f==='backup.sql'?'backup.sql.gz':$f; } $meta['files']=$newFiles; $newChecksums=[]; foreach($meta['file_checksums'] as $f=>$h){ if($f==='backup.sql') continue; $newChecksums[$f]=$h; } $newChecksums['backup.sql.gz']=$checksum; $meta['file_checksums']=$newChecksums; @unlink($original);
         return ['algo'=>'gzip','original_size_bytes'=>$originalSize,'compressed_size_bytes'=>$compressedSize,'ratio'=>$ratio];
     }
