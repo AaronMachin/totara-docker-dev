@@ -47,6 +47,7 @@ $router->register('share','import', new Snappy\Cli\Commands\share_share_import()
 
 // Maintenance (gc) + Config + Remote
 $router->register('gc','objects',  new Snappy\Cli\Commands\gc_objects());
+$router->register('gc','temp',     new Snappy\Cli\Commands\gc_temp());
 $router->register('config','get',  new Snappy\Cli\Commands\config_get());
 $router->register('config','set',  new Snappy\Cli\Commands\config_set());
 $router->register('remote','add',  new Snappy\Cli\Commands\remote_add());

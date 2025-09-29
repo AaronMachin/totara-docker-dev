@@ -6,77 +6,56 @@ use Snappy\Cli\context;
 
 class snapshot_metrics extends base_command {
     public function name(): string { return 'snapshot.metrics'; }
-    public function description(): string { return 'Show snapshot metrics (counts, total size, tags, age buckets) from local index'; }
-    public function usage(): string { return "Usage: tsnap snapshot metrics\nShows aggregate metrics derived from local snapshot index."; }
-    public function examples(): array { return [
-        'tsnap snapshot metrics',
-        'tsnap snapshot metrics --json'
-    ]; }
+    public function description(): string { return 'Show snapshot aggregate metrics (counts, sizes, newest, largest, compression)'; }
+    public function usage(): string { return "Usage: tsnap snapshot metrics\nScans manifest-v2.json files only (no index dependency) to produce aggregate metrics."; }
+    public function examples(): array { return [ 'tsnap snapshot metrics', 'tsnap snapshot metrics --json' ]; }
+    public function metadata(): array { $m = parent::metadata(); $m['group']='Maintenance'; return $m; }
 
     public function run(array $args, context $ctx): int {
-        $index = $ctx->index->load();
-        if (!$index) { // attempt rebuild once then reload
-            $ctx->index->rebuild();
-            $index = $ctx->index->load(false);
-        }
-        $snapshots = $index['snapshots'] ?? [];
-        $total = count($snapshots);
-        $totalSize = 0;
-        $tagCounts = [];
-        $buckets = ['lt_1d'=>0,'d1_7'=>0,'d8_30'=>0,'gt_30d'=>0];
-        $now = time();
-        foreach ($snapshots as $row) {
-            $totalSize += (int)($row['size_total_bytes'] ?? 0);
-            $tags = $row['tags'] ?? [];
-            if (is_array($tags)) {
-                // de-dup per snapshot
-                $uniq = array_values(array_unique(array_filter(array_map('strval',$tags),'strlen')));
-                foreach ($uniq as $t) { $tagCounts[$t] = ($tagCounts[$t] ?? 0) + 1; }
-            }
-            $createdIso = $row['created_utc'] ?? '';
-            $ts = $createdIso ? strtotime($createdIso) : null;
-            if ($ts) {
-                $days = (int)floor(($now - $ts) / 86400);
-                if ($days < 1) { $buckets['lt_1d']++; }
-                elseif ($days <= 7) { $buckets['d1_7']++; }
-                elseif ($days <= 30) { $buckets['d8_30']++; }
-                else { $buckets['gt_30d']++; }
+        $base = rtrim($ctx->registry->local_base_path(), '/');
+        $snapsDir = $base . '/snaps';
+        $totalSnapshots = 0; $totalBytes = 0; $compressedCount = 0;
+        $newest = ['uid'=>null,'created'=>null];
+        $largest = ['uid'=>null,'bytes'=>0];
+        if (is_dir($snapsDir)) {
+            $entries = @scandir($snapsDir) ?: [];
+            foreach ($entries as $e) {
+                if ($e==='.'||$e==='..' || $e==='index.json') { continue; }
+                $manPath = $snapsDir.'/'.$e.'/manifest-v2.json';
+                if (!is_file($manPath)) { continue; }
+                $raw = @json_decode((string)@file_get_contents($manPath), true);
+                if (!is_array($raw)) { continue; }
+                $uid = $raw['uid'] ?? $e; if(!is_string($uid) || $uid==='') { $uid = $e; }
+                $created = $raw['created_utc'] ?? ($raw['created'] ?? null);
+                $size = (int)($raw['size_total_bytes'] ?? 0);
+                $compression = $raw['compression']['enabled'] ?? false;
+                $totalSnapshots++; $totalBytes += $size; if ($compression) { $compressedCount++; }
+                if ($created && (!$newest['created'] || strcmp($created,$newest['created'])>0)) { $newest = ['uid'=>$uid,'created'=>$created]; }
+                if ($size > $largest['bytes']) { $largest = ['uid'=>$uid,'bytes'=>$size]; }
             }
         }
-        ksort($tagCounts, SORT_NATURAL | SORT_FLAG_CASE);
-        // Text tables
+        $averageSize = $totalSnapshots>0 ? (int)floor($totalBytes / $totalSnapshots) : 0;
+        // Text output tables
         $ctx->out->table(['METRIC','VALUE'], [
-            ['snapshots_total', (string)$total],
-            ['size_total_bytes', (string)$totalSize],
+            ['total_snapshots', (string)$totalSnapshots],
+            ['total_bytes', (string)$totalBytes],
+            ['average_size', (string)$averageSize],
+            ['compressed_count', (string)$compressedCount],
         ]);
-        $ctx->out->table(['AGE_BUCKET','COUNT'], [
-            ['<1d', (string)$buckets['lt_1d']],
-            ['1-7d', (string)$buckets['d1_7']],
-            ['8-30d', (string)$buckets['d8_30']],
-            ['>30d', (string)$buckets['gt_30d']],
-        ]);
-        $tagRows = [];
-        if ($tagCounts) {
-            // sort descending counts then alpha
-            uasort($tagCounts, function($a,$b) use ($tagCounts){ return $b <=> $a; });
-            foreach ($tagCounts as $tag => $cnt) { $tagRows[] = [$tag, (string)$cnt]; }
-        }
-        $ctx->out->table(['TAG','COUNT'], $tagRows ?: [['(none)','0']]);
+        $ctx->out->table(['NEWEST_UID','CREATED_UTC'], [ [ (string)($newest['uid'] ?? ''), (string)($newest['created'] ?? '') ] ]);
+        $ctx->out->table(['LARGEST_UID','BYTES'], [ [ (string)($largest['uid'] ?? ''), (string)$largest['bytes'] ] ]);
         $payload = [
-            'snapshots_total' => $total,
-            'size_total_bytes' => $totalSize,
-            'age_buckets' => [
-                'lt_1d' => $buckets['lt_1d'],
-                'd1_7' => $buckets['d1_7'],
-                'd8_30' => $buckets['d8_30'],
-                'gt_30d' => $buckets['gt_30d'],
-            ],
-            'tags' => $tagCounts,
-            'generated_utc' => $index['generated_utc'] ?? null,
-            'now_utc' => gmdate('c'),
+            'total_snapshots' => $totalSnapshots,
+            'total_bytes' => $totalBytes,
+            'average_size' => $averageSize,
+            'compressed_count' => $compressedCount,
+            'newest_uid' => $newest['uid'],
+            'newest_created' => $newest['created'],
+            'largest_uid' => $largest['uid'],
+            'largest_bytes' => $largest['bytes'],
+            'generated_utc' => gmdate('c'),
         ];
         $ctx->out->json($payload);
         return 0;
     }
 }
-

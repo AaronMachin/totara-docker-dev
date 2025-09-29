@@ -41,7 +41,7 @@ abstract class InProcessCliTestCase extends TestCase {
 
     protected function buildRouter(): command_router {
         $cmdDir = __DIR__ . '/../../src/cli/commands';
-        $needed = ['snapshot_create','snapshot_list','snapshot_show','snapshot_metrics','snapshot_export','snapshot_import','gc_objects','config_get','config_set','remote_list','remote_add','remote_remove'];
+        $needed = ['snapshot_create','snapshot_list','snapshot_show','snapshot_metrics','snapshot_export','snapshot_import','gc_objects','gc_temp','config_get','config_set','remote_list','remote_add','remote_remove']; // removed remote_pull (out of scope)
         foreach ($needed as $n) { $fq = 'Snappy\\Cli\\Commands\\' . $n; if (!class_exists($fq)) { $file = $cmdDir . '/' . $n . '.php'; if (is_file($file)) { require_once $file; } } }
         $router = new command_router();
         $router->register('snapshot','create', new Snappy\Cli\Commands\snapshot_create());
@@ -51,11 +51,13 @@ abstract class InProcessCliTestCase extends TestCase {
         $router->register('snapshot','export', new Snappy\Cli\Commands\snapshot_export());
         $router->register('snapshot','import', new Snappy\Cli\Commands\snapshot_import());
         $router->register('gc','objects',  new Snappy\Cli\Commands\gc_objects());
+        $router->register('gc','temp',     new Snappy\Cli\Commands\gc_temp());
         $router->register('config','get',   new Snappy\Cli\Commands\config_get());
         $router->register('config','set',   new Snappy\Cli\Commands\config_set());
         $router->register('remote','list',  new Snappy\Cli\Commands\remote_list());
         $router->register('remote','add',   new Snappy\Cli\Commands\remote_add());
         $router->register('remote','remove',new Snappy\Cli\Commands\remote_remove());
+        // removed remote pull registration
         return $router;
     }
 

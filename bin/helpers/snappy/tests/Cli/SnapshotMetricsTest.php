@@ -15,53 +15,42 @@ final class SnapshotMetricsTest extends AbstractCliTestCase {
     }
 
     public function testEmptyMetrics(): void {
-        // ensure snaps dir exists but empty
-        // run metrics
         $out = $this->runCli('--json snapshot metrics', $code);
         $this->assertSame(0,$code,$out);
         $decoded = json_decode($out,true);
         $this->assertIsArray($decoded);
         $payload = $decoded['data']['payload'];
-        $this->assertSame(0, $payload['snapshots_total']);
-        $this->assertSame(0, $payload['size_total_bytes']);
-        $this->assertEquals(['lt_1d'=>0,'d1_7'=>0,'d8_30'=>0,'gt_30d'=>0], $payload['age_buckets']);
+        $this->assertSame(0, $payload['total_snapshots']);
+        $this->assertSame(0, $payload['total_bytes']);
+        $this->assertSame(0, $payload['average_size']);
+        $this->assertSame(0, $payload['compressed_count']);
+        $this->assertNull($payload['newest_uid']);
+        $this->assertNull($payload['largest_uid']);
     }
 
-    public function testAgeBuckets(): void {
-        $uid1 = $this->createSnapshot('s1'); // will become <1d
-        $uid2 = $this->createSnapshot('s2'); // 2d
-        $uid3 = $this->createSnapshot('s3'); // 15d
-        $uid4 = $this->createSnapshot('s4'); // 45d
-        // Determine snapshot parent/root (tmpRoot parent contains /snaps directory)
-        $snapParent = $this->tmpRoot; // AbstractCliTestCase sets snapshots under $tmpRoot/snaps
-        $snapDir = $snapParent . '/snaps';
-        $map = [
-            $uid1 => strtotime('-10 minutes'),
-            $uid2 => strtotime('-2 days'),
-            $uid3 => strtotime('-15 days'),
-            $uid4 => strtotime('-45 days'),
-        ];
-        foreach ($map as $uid => $ts) {
-            $manifest = $snapDir . '/' . $uid . '/manifest-v2.json';
-            $raw = json_decode((string)@file_get_contents($manifest), true);
-            $this->assertIsArray($raw, 'manifest must load for '.$uid);
-            $raw['created_utc'] = gmdate('Y-m-d\TH:i:s\Z', $ts);
-            file_put_contents($manifest, json_encode($raw, JSON_PRETTY_PRINT));
+    public function testAggregateMetrics(): void {
+        $uid1 = $this->createSnapshot('a1');
+        $uid2 = $this->createSnapshot('a2');
+        // mutate size_total_bytes for second snapshot by appending to backup.sql(.gz?)
+        $snapDir = $this->tmpRoot . '/snaps';
+        foreach ([$uid1,$uid2] as $u) {
+            $manPath = $snapDir . '/' . $u . '/manifest-v2.json';
+            $raw = json_decode((string)@file_get_contents($manPath), true);
+            $this->assertIsArray($raw);
+            // ensure differing created_utc ordering
+            if ($u === $uid1) { $raw['created_utc'] = gmdate('Y-m-d\TH:i:s\Z', time()-60); }
+            else { $raw['created_utc'] = gmdate('Y-m-d\TH:i:s\Z', time()); }
+            file_put_contents($manPath, json_encode($raw, JSON_PRETTY_PRINT));
         }
-        // Rebuild index using parent path
-        $idx = new index_manager($snapParent);
-        $idx->rebuild();
-
         $out = $this->runCli('--json snapshot metrics', $code);
         $this->assertSame(0,$code,$out);
         $decoded = json_decode($out,true);
-        $this->assertIsArray($decoded);
         $payload = $decoded['data']['payload'];
-        $this->assertSame(4, $payload['snapshots_total']);
-        $ages = $payload['age_buckets'];
-        $this->assertSame(1, $ages['lt_1d']);
-        $this->assertSame(1, $ages['d1_7']);
-        $this->assertSame(1, $ages['d8_30']);
-        $this->assertSame(1, $ages['gt_30d']);
+        $this->assertSame(2, $payload['total_snapshots']);
+        $this->assertIsInt($payload['total_bytes']);
+        $this->assertGreaterThanOrEqual(0, $payload['total_bytes']);
+        $this->assertSame($payload['total_bytes']>0 ? (int)floor($payload['total_bytes']/2) : 0, $payload['average_size']);
+        $this->assertSame($payload['newest_uid'], $uid2); // second snapshot newer
+        $this->assertContains($payload['largest_uid'], [$uid1,$uid2]);
     }
 }
