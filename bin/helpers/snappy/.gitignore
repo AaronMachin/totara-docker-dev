@@ -1,3 +1,4 @@
 /manifest_hash.txt
 /vendor
 config.json
+.phpunit.cache
