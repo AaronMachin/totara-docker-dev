@@ -35,6 +35,7 @@ class share_create_service {
             if($hostProvider instanceof host_provider_interface){
                 $res = $hostProvider->start($boundPort);
                 if($res){ $payloadData['h']=$res['host']; $payloadData['p']=$res['port']; $payloadData['tunnel']=$res['tunnel']; }
+                else { $payloadData['tunnel_failed']=true; }
             }
             $onPayload($payloadData);
         };
