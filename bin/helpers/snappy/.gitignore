@@ -1,4 +1,3 @@
-config.json
-vendor/
-.phpunit.cache/
-coverage/
+# Ignore previously committed manifest hash artifact (superseded by golden test)
+/manifest_hash.txt
+
