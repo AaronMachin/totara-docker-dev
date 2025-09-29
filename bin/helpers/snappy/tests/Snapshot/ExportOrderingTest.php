@@ -32,7 +32,7 @@ final class ExportOrderingTest extends TestCase {
         $service=new export_service($manager); $outDir=$this->root.'/exports'; @mkdir($outDir,0777,true); $res=$service->export($uid,['out_dir'=>$outDir]);
         $this->assertFileExists($res['artifact_path']);
         $entries=$this->listTarEntries($res['artifact_path']);
-        $this->assertSame(['manifest-v2.json','export.json','files/backup.sql','files/empty.bin','files/extra.txt'],$entries,'Tar entry ordering must be deterministic');
+        $this->assertSame(['manifest-v2.json','export.json','files/backup.sql','files/empty.bin','files/extra.txt','metadata/summary.json'],$entries,'Tar entry ordering must be deterministic');
         // Read export.json content
         $exportJson=$this->readTarFile($res['artifact_path'],'export.json');
         $this->assertNotNull($exportJson);
@@ -59,4 +59,3 @@ final class ExportOrderingTest extends TestCase {
                 $remain=$size; while($remain>0){ $chunk=gzread($gz,min(8192,$remain)); if($chunk===''){ break; } $remain-=strlen($chunk);} $pad=$size%512; if($pad>0){ gzread($gz,512-$pad);} }
         } gzclose($gz); return $data; }
 }
-

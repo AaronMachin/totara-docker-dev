@@ -11,25 +11,10 @@ class export_service {
     private snapshot_manager $manager;
     private integrity_service $integrity;
     private int $chunkSize = 65536;
-    /** @var metadata_provider_interface[]|null */
-    private ?array $metadataProviders = null;
 
     public function __construct(snapshot_manager $manager) {
         $this->manager = $manager;
         $this->integrity = new integrity_service();
-    }
-
-    private function metadataProviders(): array {
-        if ($this->metadataProviders !== null) {
-            return $this->metadataProviders;
-        }
-        $providers = [];
-        // default provider (summary)
-        if (class_exists(summary_metadata_provider::class)) {
-            $providers[] = new summary_metadata_provider();
-        }
-        $this->metadataProviders = $providers;
-        return $providers;
     }
 
     /**
@@ -141,42 +126,21 @@ class export_service {
                     return @file_get_contents($diskPath);
                 }, $write, true, $diskPath);
             }
-            // metadata entries appended (deterministic order by name)
-            $metadataEntries = [];
-            // prepare context for providers
-            $fileHashes = [];
-            foreach ($filesMeta as $fm) {
-                $fileHashes[basename($fm['path'])] = $fm['sha256'];
-            }
-            $providerContext = ['manifest' => $manifestArr, 'files' => $payloadFiles, 'file_hashes' => $fileHashes, 'artifact_sha256' => $artifactSha];
-            foreach ($this->metadataProviders() as $provider) {
-                try {
-                    $generated = $provider->generate($uid, $snapDir, $providerContext);
-                    if (!is_array($generated)) {
-                        continue;
-                    }
-                    foreach ($generated as $item) {
-                        $name = (string) ($item['name'] ?? '');
-                        $content = (string) ($item['content'] ?? '');
-                        if ($name === '') {
-                            continue;
-                        }
-                        $safeName = preg_replace('/[^A-Za-z0-9._-]/', '_', $name);
-                        if ($safeName === '') {
-                            continue;
-                        }
-                        $metadataEntries[] = ['name' => 'metadata/' . $safeName, 'content' => $content];
-                    }
-                } catch (\Throwable $e) { /* ignore provider failure to avoid breaking export */
+            // Include pre-generated metadata directory (no generation here)
+            $metadataDir = $snapDir.'/metadata';
+            if (is_dir($metadataDir)) {
+                $metaFiles = @scandir($metadataDir) ?: [];
+                $entries = [];
+                foreach ($metaFiles as $mf) {
+                    if ($mf==='.'||$mf==='..') continue;
+                    $path = $metadataDir.'/'.$mf; if(!is_file($path)) continue;
+                    $entries[] = $mf;
                 }
-            }
-            if ($metadataEntries) {
-                usort($metadataEntries, fn($a, $b) => strcmp($a['name'], $b['name']));
-                foreach ($metadataEntries as $me) {
-                    $c = $me['content'];
-                    $this->writeTarEntry($me['name'], strlen($c), function () use ($c) {
-                        return $c;
-                    }, $write);
+                sort($entries, SORT_STRING);
+                foreach ($entries as $mf) {
+                    $path = $metadataDir.'/'.$mf; $size = filesize($path)?:0;
+                    // stream file (reuse streaming pattern)
+                    $this->writeTarEntry('metadata/'.$mf,$size,function() use ($path){ return @file_get_contents($path); },$write,true,$path);
                 }
             }
             // two zero blocks
