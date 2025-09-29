@@ -1,17 +1,21 @@
 # Remotes (Configuration + Pull)
 
-Status: Supports configuration (add/list/remove) and snapshot pull (download) from S3/memory remotes into local snapshot store.
+Status: Supports configuration (add/list/remove), snapshot pull (download), and remote snapshot listing via `snapshot list --remote <name>`.
 
 ## Purpose
-Define S3-compatible remote endpoints (name -> endpoint, bucket, credentials) and allow pulling a remote snapshot directory into local storage for inspection, sharing, or restoration.
+Define S3-compatible remote endpoints (name -> endpoint, bucket, credentials), list remote snapshots, and allow pulling a remote snapshot directory into local storage for inspection, sharing, or restoration.
 
 ## Supported Operations
 - Add: `remote add <name> --endpoint=URL --bucket=NAME --region=REG --key=ACCESSKEY --secret=SECRET [--path-style]`
   - `region` optional (defaults `us-east-1`)
   - `--path-style` sets path_style=true for MinIO / path addressing
   - Name pattern: `^[a-z0-9][a-z0-9_-]{0,31}$` (lowercase)
-- List: `remote list` (redacts credentials)
-- Remove: `remote remove <name>` (cannot remove `local`)
+- List Remotes: `remote list` (redacts credentials)
+- List Remote Snapshots: `snapshot list --remote <name> [--limit=N] [--full]`
+  - Scans objects under `snaps/`, fetches `manifest-v2.json` or falls back to `meta.json`
+  - Outputs uid, created, type, first line of message (or full message flattened with `--full`), and size when derivable
+  - JSON shape: `{ remote, snapshots:[ { uid, created, type, message, size_bytes? } ], full, limit, errors, candidates }`
+  - Corrupt / unreadable entries skipped; if all unreadable returns non-zero with error
 - Pull: `remote pull <remote> <uid|prefix> [--uid-strategy=keep|new] [--force] [--progress] [--out-dir=DIR]`
   - Resolves `<uid|prefix>` remotely (must uniquely match)
   - Downloads all files under `snaps/<uid>/` into local `snaps/<uid>` (or new uid when `--uid-strategy=new`)
@@ -52,10 +56,16 @@ JSON (`--json` global flag):
 
 ## Examples
 ```
+# List remote snapshots (first 10)
+tsnap snapshot list --remote prod --limit=10
+
+# Full messages
+tsnap snapshot list --remote prod --full
+
 # Add a production remote (MinIO style path addressing)
 tsnap remote add prod --endpoint=http://minio.local:9000 --bucket=snaps --key=minioadmin --secret=minioadmin --path-style
 
-# List (human)
+# List remotes (human)
 tsnap remote list
 
 # Pull snapshot (keep uid)
@@ -74,6 +84,7 @@ tsnap remote pull prod 4f2c9e1a --force --progress
 - Credential helpers / env sourcing
 - Optional reachability or credential validation
 - Parallelism / multipart tuning
+- Pagination beyond overscan heuristic
 
 ## Notes
 - Config file writes are atomic (temp + rename).
