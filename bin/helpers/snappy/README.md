@@ -75,6 +75,47 @@ Configuration
 Configuration file: config.json at the chosen base (SNAPPY_CONFIG_FILE or default under tool directory for embedded usage). Remote configs stored under remotes:{ name:{ type:"s3", config:{endpoint,bucket,region,key,secret,path_style?} } } plus the reserved remotes.local entry.
 Secrets are never printed; remote list redacts credentials.
 
+Share Host Providers & Tunnelling
+---------------------------------
+The share.create command can expose a snapshot artifact beyond your LAN using a pluggable *host provider*.
+
+Defaults:
+- Provider selected via config option: options.share_host_provider (string)
+- Default value: "ngrok" (if ngrok binary present in PATH it will create a TCP tunnel)
+- Set to "none" (or use --lan-only flag) to disable tunnelling and keep sharing local / LAN-only.
+
+Security / Access:
+- An OTP (one-time password) k is generated per share session and embedded in the encoded payload; the importer automatically appends it (?k=).
+- If OTP omitted or wrong, server returns 403 Forbidden.
+- No encryption: treat data as public. Integrity is always verified (sha256) client side.
+
+Configuration Example (config.json):
+```
+{
+  "options": {
+    "share_host_provider": "ngrok"
+  }
+}
+```
+Set to none:
+```
+{
+  "options": { "share_host_provider": "none" }
+}
+```
+Runtime Overrides:
+- --lan-only flag forces provider=none for that invocation.
+
+Payload Fields (additions):
+- provider: configured provider name (e.g. ngrok, none)
+- tunnel: active tunnel type or none
+- k: OTP required to download (+ appended automatically by importer)
+
+Example:
+  tsnap share create <uid>
+  # Outputs encoded payload containing provider, tunnel, k
+  tsnap share import <encoded>
+
 Quick Start
 -----------
 Create a snapshot:
@@ -85,6 +126,13 @@ Show details:
   tsnap show <uid>
 Apply (restore) a snapshot to your dev database:
   tsnap apply <uid>
+Share snapshot over the internet (ngrok default if available):
+  tsnap share create <uid>
+LAN only (no tunnel):
+  tsnap share create <uid> --lan-only
+Import shared snapshot (OTP + checksum verified):
+  tsnap share import <encoded>
+
 Delete snapshot (safe removal + index prune):
   tsnap snapshot delete <uid|prefix>
 Metrics (once alias added):

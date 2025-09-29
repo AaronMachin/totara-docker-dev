@@ -5,10 +5,11 @@ use Snappy\Support\Exception\ValidationException;
 
 class share_http_server {
     private string $host; private int $port; private string $artifactPath; private int $maxDownloads; private int $ttl; private bool $multi; private int $successful=0; private int $artifactSize; private int $chunk=65536; private int $startedAt; private $server=null; private bool $stop=false;
+    private ?string $otp = null; // one-time password
 
-    public function __construct(string $host,int $port,string $artifactPath,int $maxDownloads,int $ttl,bool $multi){
+    public function __construct(string $host,int $port,string $artifactPath,int $maxDownloads,int $ttl,bool $multi, ?string $otp=null){
         $this->host=$host; $this->port=$port; $this->artifactPath=$artifactPath; $this->maxDownloads=$maxDownloads; $this->ttl=$ttl; $this->multi=$multi; $this->artifactSize = is_file($artifactPath)? (filesize($artifactPath)?:0):0; if($this->artifactSize<=0){ throw new ValidationException('artifact missing or empty'); }
-    }
+        $this->otp = $otp; }
 
     /** Start server (blocking). Optional onReady callable(host,port). Returns array{host:string,port:int,downloads:int} */
     public function start(?callable $onReady=null): array {
@@ -51,10 +52,15 @@ class share_http_server {
         }
         $first = strtok($reqLine,"\r\n");
         if(!$first){ $this->respond($conn,400,'bad request'); return; }
-        $parts = explode(' ',$first); $method=$parts[0]??''; $path=$parts[1]??'';
+        $parts = explode(' ',$first); $method=$parts[0]??''; $rawPath=$parts[1]??''; $path=$rawPath; $query='';
+        if(($qpos=strpos($rawPath,'?'))!==false){ $path=substr($rawPath,0,$qpos); $query=substr($rawPath,$qpos+1); }
         if($method!=='GET'){ $this->respond($conn,405,'method not allowed'); return; }
         if($path==='/health'){ $this->respond($conn,200,'ok'); return; }
         if($path==='/artifact'){
+            if($this->otp !== null){
+                $k=null; if($query!==''){ foreach(explode('&',$query) as $pair){ if(str_contains($pair,'=')){ [$kname,$v]=explode('=',$pair,2); if($kname==='k'){ $k=$v; break; } } } }
+                if($k!==$this->otp){ $this->respond($conn,403,'forbidden'); return; }
+            }
             $fh=@fopen($this->artifactPath,'rb'); if(!$fh){ $this->respond($conn,500,'artifact missing'); return; }
             $headers = [
                 'HTTP/1.1 200 OK',
@@ -72,7 +78,7 @@ class share_http_server {
         $this->respond($conn,404,'not found');
     }
 
-    private function respond($conn,int $code,string $body): void { $msg = [200=>'OK',400=>'Bad Request',404=>'Not Found',405=>'Method Not Allowed',500=>'Internal Server Error'][$code]??'Status'; $resp="HTTP/1.1 $code $msg\r\nContent-Type: text/plain\r\nContent-Length: ".strlen($body)."\r\nConnection: close\r\n\r\n$body"; @fwrite($conn,$resp); @fclose($conn); }
+    private function respond($conn,int $code,string $body): void { $msg = [200=>'OK',400=>'Bad Request',403=>'Forbidden',404=>'Not Found',405=>'Method Not Allowed',500=>'Internal Server Error'][$code]??'Status'; $resp="HTTP/1.1 $code $msg\r\nContent-Type: text/plain\r\nContent-Length: ".strlen($body)."\r\nConnection: close\r\n\r\n$body"; @fwrite($conn,$resp); @fclose($conn); }
 
     public function port(): int { return $this->port; }
 }

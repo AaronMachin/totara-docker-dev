@@ -16,11 +16,13 @@
     }
   },
   "options": {
-    "default_remote": "catalog"
+    "default_remote": "catalog",
+    "share_host_provider": "ngrok"
   },
   "aliases": {
     "create": "snapshot.create",
     "list": "snapshot.list",
-    "show": "snapshot.show"
+    "show": "snapshot.show",
+    "delete": "snapshot.delete"
   }
 }

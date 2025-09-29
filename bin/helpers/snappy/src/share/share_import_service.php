@@ -13,7 +13,8 @@ class share_import_service {
         if(($payload['v']??0)!==1){ throw new ValidationException('unsupported payload version'); }
         $host = $payload['h']??''; $port=(int)($payload['p']??0); $path=$payload['path']??'/artifact'; $expectedSha=$payload['sha']??''; $code=$payload['code']??''; $sourceUid=$payload['uid']??'';
         if($host===''||$port<=0||$expectedSha===''){ throw new ValidationException('payload incomplete'); }
-        $tmp = $this->download($host,$port,$path,$expectedSha);
+        $otp = $payload['k'] ?? null;
+        $tmp = $this->download($host,$port,$path,$expectedSha,$otp);
         $importer = new import_service($this->manager);
         $uidStrategy = $options['uid_strategy'] ?? 'new';
         $res = $importer->importArtifact($tmp,['uid_strategy'=>$uidStrategy]);
@@ -35,8 +36,9 @@ class share_import_service {
         return $res + ['verification_code'=>$code];
     }
 
-    private function download(string $host,int $port,string $path,string $expectedSha): string {
+    private function download(string $host,int $port,string $path,string $expectedSha, ?string $otp=null): string {
         if($path===''){ $path='/artifact'; } if($path[0] !== '/') { $path = '/'.$path; }
+        if($otp!==null){ $path .= (str_contains($path,'?')?'&':'?').'k='.$otp; }
         $lastError = null;
         for($attempt=1;$attempt<=3;$attempt++) {
             $addr = 'tcp://'.$host.':'.$port; $timeout=8; // slight increase
