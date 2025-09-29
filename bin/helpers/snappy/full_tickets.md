@@ -28,6 +28,7 @@ If unsure about a detail: infer from existing conventions (snapshot_manager, ind
 Always produce value each response (plan, diff, test run, or commit).
 Always double check your work, both in running tests AND in thinking it through before committing.
 WHEN RUNNING COMMANDS CHECK THE CWD
+If you encounter issues with running in the terminal or getting the output , check in with me as I might be able to see something you don't.
 End of handover prompt.
 
 Ticket Format Legend

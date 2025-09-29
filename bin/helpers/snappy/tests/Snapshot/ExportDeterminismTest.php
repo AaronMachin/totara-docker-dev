@@ -15,7 +15,7 @@ final class ExportDeterminismTest extends TestCase {
 
     private function recursiveDelete(string $dir): void { if(!is_dir($dir)) return; $it=new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dir,FilesystemIterator::SKIP_DOTS),RecursiveIteratorIterator::CHILD_FIRST); foreach($it as $f){ $f->isDir()?@rmdir($f->getPathname()):@unlink($f->getPathname()); } @rmdir($dir); }
 
-    private function makeManager(snapshot_manager &$managerOut=null): snapshot_manager { $cfgFile=$this->root.'/config.json'; $cfg=new config_manager($cfgFile,$this->root); $cfg->save(); $registry=new remote_registry($cfg,$this->root); $manager=new snapshot_manager($registry); $managerOut=$manager; return $manager; }
+    private function makeManager(?snapshot_manager &$managerOut=null): snapshot_manager { $cfgFile=$this->root.'/config.json'; $cfg=new config_manager($cfgFile,$this->root); $cfg->save(); $registry=new remote_registry($cfg,$this->root); $manager=new snapshot_manager($registry); $managerOut=$manager; return $manager; }
 
     public function testRepeatExportStableArtifactHash(): void {
         putenv('SNAPPY_FAKE_DUMP=1'); // use fake dump provider
@@ -35,4 +35,3 @@ final class ExportDeterminismTest extends TestCase {
         $this->assertNotEmpty($f1); $this->assertNotEmpty($f2);
     }
 }
-

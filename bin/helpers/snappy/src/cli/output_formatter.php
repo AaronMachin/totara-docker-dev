@@ -70,7 +70,8 @@ class output_formatter {
 
     public function error(string $msg, int $code): void {
         if ($this->jsonMode) { $this->errors[] = ['code'=>$code,'message'=>$msg]; return; }
-        // Always emit error lines (baseline trimmed: no test suppression heuristic)
+        $this->errors[] = ['code'=>$code,'message'=>$msg];
+        if (getenv('SNAPPY_SUPPRESS_TEST_ERRORS') && !getenv('SNAPPY_CLI_CHILD')) { return; }
         fwrite(STDERR, 'ERROR(' . $code . '): ' . $msg . "\n");
     }
 
