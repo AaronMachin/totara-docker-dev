@@ -53,6 +53,7 @@ $router->register('config','set',  new Snappy\Cli\Commands\config_set());
 $router->register('remote','add',  new Snappy\Cli\Commands\remote_add());
 $router->register('remote','list', new Snappy\Cli\Commands\remote_list());
 $router->register('remote','remove', new Snappy\Cli\Commands\remote_remove());
+$router->register('remote','pull', new Snappy\Cli\Commands\remote_pull());
 
 array_shift($argv); // remove script name
 

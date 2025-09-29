@@ -1,9 +1,9 @@
-# Remotes (T14F Config CRUD Only)
+# Remotes (Configuration + Pull)
 
-Status: Basic configuration (add/list/remove) stored in config.json. Listing integration with snapshot operations deferred to T14J.
+Status: Supports configuration (add/list/remove) and snapshot pull (download) from S3/memory remotes into local snapshot store.
 
 ## Purpose
-Define S3-compatible remote endpoints (name -> endpoint, bucket, credentials) for future snapshot pull/push & remote listing features.
+Define S3-compatible remote endpoints (name -> endpoint, bucket, credentials) and allow pulling a remote snapshot directory into local storage for inspection, sharing, or restoration.
 
 ## Supported Operations
 - Add: `remote add <name> --endpoint=URL --bucket=NAME --region=REG --key=ACCESSKEY --secret=SECRET [--path-style]`
@@ -12,6 +12,13 @@ Define S3-compatible remote endpoints (name -> endpoint, bucket, credentials) fo
   - Name pattern: `^[a-z0-9][a-z0-9_-]{0,31}$` (lowercase)
 - List: `remote list` (redacts credentials)
 - Remove: `remote remove <name>` (cannot remove `local`)
+- Pull: `remote pull <remote> <uid|prefix> [--uid-strategy=keep|new] [--force] [--progress] [--out-dir=DIR]`
+  - Resolves `<uid|prefix>` remotely (must uniquely match)
+  - Downloads all files under `snaps/<uid>/` into local `snaps/<uid>` (or new uid when `--uid-strategy=new`)
+  - Verifies checksums when `manifest-v2.json` present; synthesises manifest when only `meta.json` exists
+  - `--force` allows overwrite when keeping the original uid
+  - `--progress` emits a line per file to stderr (suppressed in `--json` mode)
+  - JSON output shape: `{ action:"remote_pull", remote, uid, final_uid, files, bytes, verified, provenance_path? }`
 
 ## Redaction Rules
 Human output:
@@ -51,19 +58,24 @@ tsnap remote add prod --endpoint=http://minio.local:9000 --bucket=snaps --key=mi
 # List (human)
 tsnap remote list
 
-# List JSON
-tsnap --json remote list
+# Pull snapshot (keep uid)
+tsnap remote pull prod 4f2c9e1a
 
-# Remove
-tsnap remote remove prod
+# Pull snapshot with new uid strategy
+tsnap remote pull prod 4f2c9e1a --uid-strategy=new
+
+# Pull with progress & force overwrite
+tsnap remote pull prod 4f2c9e1a --force --progress
 ```
 
 ## Deferred (Future Tickets)
-- Remote snapshot enumeration (T14J)
-- Pull / push operations (T14I / later)
+- Push operations (upload)
+- Differential / partial sync
 - Credential helpers / env sourcing
 - Optional reachability or credential validation
+- Parallelism / multipart tuning
 
 ## Notes
 - Config file writes are atomic (temp + rename).
 - No secrets are logged beyond first 4 chars of the access key.
+- Pull creates `import_provenance_remote.json` only when using `--uid-strategy=new`.
