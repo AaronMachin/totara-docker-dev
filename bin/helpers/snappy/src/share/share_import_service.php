@@ -38,20 +38,31 @@ class share_import_service {
     private function download(string $host,int $port,string $path,string $expectedSha): string {
         $lastError = null;
         for($attempt=1;$attempt<=3;$attempt++) {
-            $addr = 'tcp://'.$host.':'.$port; $timeout=5;
+            $addr = 'tcp://'.$host.':'.$port; $timeout=8; // slight increase
             $fp = @stream_socket_client($addr,$errno,$errstr,$timeout);
-            if(!$fp){ $lastError='connect failed'; usleep(100000); continue; }
-            stream_set_timeout($fp,5);
+            if(!$fp){ $lastError='connect failed'; usleep(120000); continue; }
+            stream_set_timeout($fp,8);
             $req = "GET $path HTTP/1.1\r\nHost: $host\r\nConnection: close\r\n\r\n"; fwrite($fp,$req);
-            $header=''; while(!str_contains($header,"\r\n\r\n")){ $c=fread($fp,512); if($c===false||$c===''){ break; } $header.=$c; if(strlen($header)>16384){ break; } }
+            $header=''; while(!str_contains($header,"\r\n\r\n")){
+                $c=fread($fp,8192); if($c===false||$c===''){ if(feof($fp)) break; usleep(20000); continue; } $header.=$c; if(strlen($header)>131072){ break; }
+            }
+            $pos = strpos($header, "\r\n\r\n"); if($pos===false){ fclose($fp); $lastError='bad headers'; usleep(80000); continue; }
             $firstLine = strtok($header,"\r\n");
             if($firstLine===false || !preg_match('/^HTTP\/\d\.\d\s+200\b/',$firstLine)) { fclose($fp); $lastError='unexpected status'; usleep(120000); continue; }
+            $contentLength = 0; if(preg_match('/Content-Length:\s*(\d+)/i',$header,$m)){ $contentLength=(int)$m[1]; }
             $tmp=sys_get_temp_dir().'/snappy_share_dl_'.bin2hex(random_bytes(4)); $fh=@fopen($tmp,'wb'); if(!$fh){ fclose($fp); $lastError='temp open fail'; usleep(50000); continue; }
-            $hashCtx=hash_init('sha256');
-            $remain = substr($header,strpos($header,"\r\n\r\n")+4); if($remain!==''){ fwrite($fh,$remain); hash_update($hashCtx,$remain); }
-            while(!feof($fp)){ $buf=fread($fp,65536); if($buf===false){ break; } if($buf===''){ continue; } fwrite($fh,$buf); hash_update($hashCtx,$buf); }
+            $hashCtx=hash_init('sha256'); $written=0;
+            $remain = substr($header,$pos+4); if($remain!==''){ fwrite($fh,$remain); hash_update($hashCtx,$remain); $written+=strlen($remain); }
+            while(!feof($fp)){
+                $buf=fread($fp,65536); if($buf===false){ break; } if($buf===''){ $meta=stream_get_meta_data($fp); if(($meta['timed_out']??false)===true){ break; } usleep(10000); continue; } fwrite($fh,$buf); hash_update($hashCtx,$buf); $written+=strlen($buf); }
             fclose($fp); fclose($fh);
-            $sha=hash_final($hashCtx); if(strtolower($sha)!==strtolower($expectedSha)){ @unlink($tmp); throw new ValidationException('artifact sha mismatch'); }
+            if($contentLength>0 && $written!==$contentLength){ @unlink($tmp); $lastError='incomplete download (expected '.$contentLength.' got '.$written.')'; usleep(160000); continue; }
+            $sha=hash_final($hashCtx);
+            if(strtolower($sha)!==strtolower($expectedSha)){
+                @unlink($tmp);
+                // Do not retry on sha mismatch; payload considered tampered.
+                throw new ValidationException('artifact sha mismatch');
+            }
             return $tmp; // success
         }
         throw new ValidationException($lastError ?: 'download failed');
