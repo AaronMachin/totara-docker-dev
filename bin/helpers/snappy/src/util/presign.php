@@ -17,7 +17,7 @@ class presign {
         if ($encodeScopeSlashes) {
             $credential = rawurlencode($accessKey . '/' . $credentialScope); // legacy approach
         } else {
-            // Encode only the access key, leave slashes literal (some MinIO gateways expect this)
+            // Encode only the access key, leave slashes literal (some S3-compatible gateways expect this)
             $credential = rawurlencode($accessKey) . '/' . $credentialScope;
         }
         $signedHeaders = 'host';

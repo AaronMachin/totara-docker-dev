@@ -8,7 +8,7 @@ Define S3-compatible remote endpoints (name -> endpoint, bucket, credentials), l
 ## Supported Operations
 - Add: `remote add <name> --endpoint=URL --bucket=NAME --region=REG --key=ACCESSKEY --secret=SECRET [--path-style]`
   - `region` optional (defaults `us-east-1`)
-  - `--path-style` sets path_style=true for MinIO / path addressing
+  - `--path-style` sets path_style=true for path-style S3-compatible object stores (e.g. local gateways, self-hosted services)
   - Name pattern: `^[a-z0-9][a-z0-9_-]{0,31}$` (lowercase)
 - List Remotes: `remote list` (redacts credentials)
 - List Remote Snapshots: `snapshot list --remote <name> [--limit=N] [--full]`
@@ -62,8 +62,8 @@ tsnap snapshot list --remote prod --limit=10
 # Full messages
 tsnap snapshot list --remote prod --full
 
-# Add a production remote (MinIO style path addressing)
-tsnap remote add prod --endpoint=http://minio.local:9000 --bucket=snaps --key=minioadmin --secret=minioadmin --path-style
+# Add a production remote (path-style object store)
+tsnap remote add prod --endpoint=http://objectstore.local:9000 --bucket=snaps --key=access --secret=secret --path-style
 
 # List remotes (human)
 tsnap remote list
@@ -77,6 +77,14 @@ tsnap remote pull prod 4f2c9e1a --uid-strategy=new
 # Pull with progress & force overwrite
 tsnap remote pull prod 4f2c9e1a --force --progress
 ```
+
+## Integration Test Environment (Optional)
+Set `SNAPPY_OBJECTSTORE_IT=1` to enable live object store integration tests (skipped by default).
+
+Env vars:
+- SNAPPY_OBJECTSTORE_ENDPOINT (default http://localhost:8000)
+- SNAPPY_OBJECTSTORE_USER (default admin)
+- SNAPPY_OBJECTSTORE_SECRET (default admin12345)
 
 ## Deferred (Future Tickets)
 - Push operations (upload)

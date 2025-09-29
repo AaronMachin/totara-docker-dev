@@ -10,23 +10,26 @@ use Snappy\Remote\remote_pull_service;
 use Snappy\Snapshot\integrity_service;
 
 /**
- * Integration test against a real MinIO / S3 endpoint (optional).
+ * Integration test against a real S3-compatible object store endpoint (optional).
  * Requires docker compose bucket service running locally:
  *   docker compose -f compose/bucket.yml up -d bucket
- * Then set env before running PHPUnit:
- *   SNAPPY_MINIO_IT=1
- *
- * Uses credentials from compose file (admin / admin12345) and random bucket name per test run.
+ * Enable with: SNAPPY_OBJECTSTORE_IT=1
+ * Env vars:
+ *   SNAPPY_OBJECTSTORE_ENDPOINT (default http://localhost:8000)
+ *   SNAPPY_OBJECTSTORE_USER (default admin)
+ *   SNAPPY_OBJECTSTORE_SECRET (default admin12345)
  */
-final class RemoteMinioIntegrationTest extends TestCase {
-    private string $tmpRoot; private string $bucket; private string $endpoint;
+final class RemoteObjectStoreIntegrationTest extends TestCase {
+    private string $tmpRoot; private string $bucket; private string $endpoint; private string $user; private string $secret;
 
     protected function setUp(): void {
         parent::setUp();
-        if (!getenv('SNAPPY_MINIO_IT')) { $this->markTestSkipped('Set SNAPPY_MINIO_IT=1 to run MinIO integration tests'); }
-        $this->endpoint = getenv('SNAPPY_MINIO_ENDPOINT') ?: 'http://localhost:8000'; // host port 8000 mapped to 9000 in compose
+        if (!getenv('SNAPPY_OBJECTSTORE_IT')) { $this->markTestSkipped('Set SNAPPY_OBJECTSTORE_IT=1 to run object store integration tests'); }
+        $this->endpoint = getenv('SNAPPY_OBJECTSTORE_ENDPOINT') ?: 'http://localhost:8000';
+        $this->user = getenv('SNAPPY_OBJECTSTORE_USER') ?: 'admin';
+        $this->secret = getenv('SNAPPY_OBJECTSTORE_SECRET') ?: 'admin12345';
         $this->bucket = 'snappy-it-' . substr(bin2hex(random_bytes(4)),0,8);
-        $this->tmpRoot = sys_get_temp_dir().'/snappy_minio_it_'.bin2hex(random_bytes(5)); @mkdir($this->tmpRoot,0777,true);
+        $this->tmpRoot = sys_get_temp_dir().'/snappy_objstore_it_'.bin2hex(random_bytes(5)); @mkdir($this->tmpRoot,0777,true);
     }
 
     protected function tearDown(): void { if(is_dir($this->tmpRoot)) $this->rm($this->tmpRoot); parent::tearDown(); }
@@ -55,27 +58,26 @@ final class RemoteMinioIntegrationTest extends TestCase {
         }
     }
 
-    public function testRemotePullWithManifestFromMinio(): void {
+    public function testRemotePullWithManifestFromObjectStore(): void {
         [$cfg,$registry] = $this->buildContext();
-        $registry->add('minio','s3',[ 'endpoint'=>$this->endpoint, 'bucket'=>$this->bucket, 'region'=>'us-east-1', 'key'=> getenv('SNAPPY_MINIO_USER') ?: 'admin', 'secret'=> getenv('SNAPPY_MINIO_SECRET') ?: 'admin12345', 'path_style'=>true]);
+        $registry->add('objectstore','s3',[ 'endpoint'=>$this->endpoint, 'bucket'=>$this->bucket, 'region'=>'us-east-1', 'key'=>$this->user, 'secret'=>$this->secret, 'path_style'=>true]);
         $uid = 'itpull'.substr(bin2hex(random_bytes(6)),0,12);
-        $this->seedRemoteSnapshot($registry,'minio',$uid,true);
+        $this->seedRemoteSnapshot($registry,'objectstore',$uid,true);
         $svc = new remote_pull_service($registry);
-        $res = $svc->pull('minio',$uid,[]);
+        $res = $svc->pull('objectstore',$uid,[]);
         $this->assertTrue($res['success']);
         $this->assertTrue($res['verified']);
         $this->assertDirectoryExists($registry->local_base_path().'/snaps/'.$uid);
     }
 
-    public function testRemotePullMetaOnlyFromMinio(): void {
+    public function testRemotePullMetaOnlyFromObjectStore(): void {
         [$cfg,$registry] = $this->buildContext();
-        $registry->add('minio','s3',[ 'endpoint'=>$this->endpoint, 'bucket'=>$this->bucket, 'region'=>'us-east-1', 'key'=> getenv('SNAPPY_MINIO_USER') ?: 'admin', 'secret'=> getenv('SNAPPY_MINIO_SECRET') ?: 'admin12345', 'path_style'=>true]);
+        $registry->add('objectstore','s3',[ 'endpoint'=>$this->endpoint, 'bucket'=>$this->bucket, 'region'=>'us-east-1', 'key'=>$this->user, 'secret'=>$this->secret, 'path_style'=>true]);
         $uid = 'itmeta'.substr(bin2hex(random_bytes(6)),0,12);
-        $this->seedRemoteSnapshot($registry,'minio',$uid,false);
+        $this->seedRemoteSnapshot($registry,'objectstore',$uid,false);
         $svc = new remote_pull_service($registry);
-        $res = $svc->pull('minio',$uid,[]);
+        $res = $svc->pull('objectstore',$uid,[]);
         $this->assertTrue($res['success']);
         $this->assertFileExists($registry->local_base_path().'/snaps/'.$uid.'/manifest-v2.json');
     }
 }
-

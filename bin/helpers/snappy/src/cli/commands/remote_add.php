@@ -13,7 +13,7 @@ class remote_add extends base_command {
     public function usage(): string { return 'Usage: tsnap remote add <name> [s3] --endpoint=URL --bucket=NAME --region=REG --key=K --secret=S [--path-style]\nLegacy: tsnap remote add <name> memory'; }
     public function examples(): array { return [
         'tsnap remote add prod --endpoint=https://s3.example.com --bucket=mybucket --region=us-east-1 --key=abcd1234 --secret=xyz',
-        'tsnap remote add mem1 memory',
+        'tsnap remote add store --endpoint=http://objectstore.local:9000 --bucket=snaps --key=access --secret=secret --path-style',
     ]; }
 
     public function run(array $args, context $ctx): int {
