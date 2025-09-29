@@ -4,7 +4,6 @@ namespace Snappy\Snapshot;
 
 use Snappy\Util\snapshot_uid;
 use Snappy\Support\Exception\ValidationException;
-use Snappy\Support\Exception\SnapshotNotFoundException;
 use Snappy\Support\Exception\ProcessFailedException;
 use Snappy\Support\Process\process_runner;
 use Throwable;
@@ -98,4 +97,26 @@ class snapshot_manager {
 
     private function write_dump_failure_log(string $tempDir,string $uid,\Throwable $e,float $started,float $finished): void { if(!is_dir($tempDir)) return; $logsDir=$tempDir.'/logs'; if(!is_dir($logsDir)){@mkdir($logsDir,0777,true);} $file=$logsDir.'/dump.log'; $lines=['SNAPPY DUMP FAILURE','uid: '.$uid,'started_at: '.date('c',(int)$started),'finished_at: '.date('c',(int)$finished),'exception: '.get_class($e).': '.$e->getMessage()]; @file_put_contents($file,implode("\n",$lines)."\n"); }
     private function recursive_delete(string $dir): void { if(!is_dir($dir)) return; $items=@scandir($dir); if(!$items) return; foreach($items as $it){ if($it==='.'||$it==='..') continue; $path=$dir.'/'.$it; if(is_dir($path)) $this->recursive_delete($path); else @unlink($path); } @rmdir($dir); }
+
+    /** Delete a local snapshot directory and prune index.
+     * @return array{uid:string,bytes:int}|false */
+    public function delete(string $uid): array|false {
+        $uid = trim($uid); if ($uid==='') return false; $dir = $this->local_path($uid); if(!is_dir($dir)) return false;
+        $bytes = 0; $stack = [$dir];
+        while ($stack) {
+            $p = array_pop($stack);
+            if (!is_dir($p)) { continue; }
+            $children = @scandir($p) ?: [];
+            foreach ($children as $c) {
+                if ($c==='.'||$c==='..') continue;
+                $child = $p.'/'.$c;
+                if (is_dir($child)) { $stack[] = $child; }
+                else { $sz = @filesize($child); if($sz>0) $bytes += $sz; }
+            }
+        }
+        $this->recursive_delete($dir);
+        if (is_dir($dir)) { throw new ProcessFailedException('failed to fully remove snapshot directory'); }
+        try { $this->indexManager?->remove($uid); } catch (Throwable $e) { /* ignore */ }
+        return ['uid'=>$uid,'bytes'=>$bytes];
+    }
 }

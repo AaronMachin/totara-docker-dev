@@ -12,6 +12,7 @@ Current Supported Commands
 - snapshot list     List local snapshots (UID, created, type, first message line)
 - snapshot show     Show manifest details for a snapshot
 - snapshot metrics  Aggregate counts & basic age buckets (derived from local index)
+- snapshot delete   Delete a local snapshot by UID or unique prefix (safe index prune)
 
 (remote.*)
 - remote add <name> s3 --endpoint= --bucket= --region= --key= --secret= [--path-style]
@@ -78,6 +79,8 @@ List snapshots:
   tsnap list
 Show details:
   tsnap show <uid>
+Delete snapshot (safe removal + index prune):
+  tsnap snapshot delete <uid|prefix>
 Metrics (once alias added):
   tsnap config set aliases.metrics snapshot.metrics --persist
   tsnap metrics
@@ -92,6 +95,13 @@ List remotes:
   tsnap remote list
 Remove remote:
   tsnap remote remove prod
+
+Delete a Snapshot
+-----------------
+Safely remove a local snapshot (directory + index entry):
+  tsnap snapshot delete <uid|prefix>
+If the prefix is ambiguous (matches multiple UIDs) deletion is aborted (exit 64). If not found exit 2.
+Idempotent: deleting an already deleted UID returns exit 2.
 
 Environment Variables
 ---------------------
