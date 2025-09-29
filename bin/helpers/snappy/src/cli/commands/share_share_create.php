@@ -32,7 +32,7 @@ class share_share_create extends base_command {
                 $encoded = payload_builder::encode($payload);
                 $ctx->out->info('share server listening '.$payload['h'].':'.$payload['p']);
                 $ctx->out->info('encoded: '.$encoded);
-                $ctx->out->info('import cmd: tsnap share import '.$encoded);
+                $ctx->out->info("import cmd:\ntsnap share import ".$encoded);
                 $ctx->out->json(['encoded'=>$encoded,'verification_code'=>$payload['code']]);
             });
             $ctx->out->info('share server done downloads='.$res['downloads']);

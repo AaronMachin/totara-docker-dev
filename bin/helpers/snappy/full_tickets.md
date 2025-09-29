@@ -278,6 +278,152 @@ README update
 Commit Message: T15A feat(snapshot): add snapshot delete command
 Agent Execution Checklist: <input></input> Add delete method to snapshot_manager <input></input> Implement snapshot_delete command <input></input> Register command in tsnap_cli.php <input></input> Add tests (success/ambiguous/notfound/idempotent/json) <input></input> Update README <input></input> Run full PHPUnit <input></input> Commit (T15A feat(snapshot): add snapshot delete command)
 <hr></hr>
+
+Ticket ID: T15a.2
+Title: Snapshot Apply Command (Restore Local Database From Snapshot)
+Project Name: Snappy
+Project Purpose: Local-first developer tool for database snapshot lifecycle: create → export → import → apply (restore) → share → list remotes.
+Rewrite Note: Plain PHP ≥8.1, no new dependencies. Continue deterministic, streaming, O(1) memory patterns.
+Global Constraints: Maintain integrity, atomic writes for metadata, no secret leakage, consistent exit codes, minimal surface.
+Context Recap
+Snapshots can be created, listed, exported/imported, and shared. There is currently no sanctioned “apply” (restore) path to rehydrate a local developer database from an existing local snapshot. Users must manually pipe SQL which is error‑prone and bypasses integrity checks / consistent provider usage. We have dump providers (e.g. tdb_dump_provider) that know how to create dumps; they should also know how to apply them.
+Objective
+Add a new command: tsnap snapshot apply <uid|prefix> that restores (applies) a local snapshot (type=sql) to the active developer database using the appropriate dump provider inferred from snapshot metadata / manifest. Provide default root alias apply -> snapshot.apply.
+Rationale
+Close the lifecycle loop (create → apply).
+Reduce manual error risk (wrong DB, partial loads).
+Reuse provider logic for portability & future multi-type expansion.
+Dependencies
+snapshot_manager (resolve_uid, list, read_manifest/meta)
+dump_provider_interface / resolver
+tdb_dump_provider (must implement apply)
+fake_dump_provider (tests)
+command_router, output_formatter, index_manager (read only)
+Preconditions
+Snapshot exists locally.
+Snapshot type supported (initial: sql only).
+User has required tools/binaries to restore (already assumed for dump creation).
+Scope (In)
+New command class snapshot_apply (name(): snapshot.apply).
+Add provider apply() capability to dump_provider_interface and implementations (tdb + fake).
+Automatic provider selection via dump_provider_resolver using snapshot manifest/meta (same ‘type’ field).
+Supports backup.sql or backup.sql.gz (transparently decompress while streaming).
+JSON and text output: success summary (uid, applied_bytes, files_used).
+Exit codes:
+0 success
+2 not found (or unsupported type)
+64 ambiguous prefix
+Provider/restore process failure → mapped (ProcessFailedException → 5)
+Validation issues → 2
+Idempotent semantic: Re-applying same snapshot is allowed (does not track prior applies).
+Alias: apply -> snapshot.apply (added to default alias list if not overridden in config).
+Streaming restore (never load full dump into memory).
+Scope (Out)
+Cross-remote or remote apply
+Partial table restores / filtering
+Transactional rollback / point-in-time recovery
+Concurrent locking / concurrency guarantees
+Integrity re-verification beyond current checksum presence
+Multi-snapshot batch apply
+Implementation Steps
+Extend dump_provider_interface: add method apply(string <span>snapshotDir, array</span>options = []): ApplyResult (new simple value object or return array).
+Add new class dump_apply_result (mirroring dump_result style) with: bytes_applied (int), files (array), metadata (array).
+Implement apply() in tdb_dump_provider:
+Locate backup.sql or backup.sql.gz in snapshot dir.
+If .gz: stream decompress (gzopen/gzread fallback to shell gunzip -c).
+Pipe into restore command (reuse process_runner).
+Count bytes streamed (increment during read).
+Implement apply() in fake_dump_provider (tests): read backup.sql(.gz) and count bytes; simulate success (no actual DB).
+snapshot_apply command flow:
+Resolve token to UID (explicit ambiguity detection: gather matches; if >1 → usage 64).
+Load manifest/meta; verify snapshot_type === 'sql'. Else error (exit 2).
+Resolve provider by type (existing resolver).
+Invoke provider->apply($snapshotDir).
+On success: text “applied <uid> (<bytes> bytes)” and JSON payload: { applied_uid, applied_bytes, files_used:[...], command_version:1 }. </bytes></uid>
+Add registration in tsnap_cli.php.
+Add default alias in aliasMap (apply -> snapshot.apply).
+Tests (see below).
+Update README: command list + Quick Start + dedicated “Apply a snapshot” section.
+Ensure exit codes conform to existing ExitCodes mapping (throw appropriate exceptions).
+Full PHPUnit run, commit.
+Data Structures / Schemas
+No manifest changes.
+New dump_apply_result (schema internal) mirroring dump_result style.
+No changes to index.json.
+File Targets (Create/Modify)
+Create:
+src/snapshot/dump_apply_result.php
+src/cli/commands/snapshot_apply.php
+Modify:
+src/snapshot/dump_provider_interface.php (add apply signature)
+src/snapshot/dump_provider_resolver.php (no change unless type mapping needed)
+src/snapshot/tdb_dump_provider.php (implement apply)
+src/snapshot/fake_dump_provider.php (implement apply)
+tsnap_cli.php (register + alias)
+README.md (documentation)
+tests/Snapshot (new provider apply tests)
+tests/Cli (SnapshotApplyTest)
+Testing & Validation
+Add tests:
+SnapshotApplyTest::testApplySuccess (fake provider) – creates snapshot then applies (assert exit 0, message, JSON fields).
+SnapshotApplyTest::testApplyCompressedSnapshot (create with --compress; ensure provider handles .gz).
+SnapshotApplyTest::testNotFound (random UID → exit 2).
+SnapshotApplyTest::testAmbiguousPrefix (two snapshots sharing prefix → exit 64).
+SnapshotApplyTest::testUnsupportedTypeFuture (simulate meta with unknown type → exit 2).
+SnapshotApplyTest::testAliasApply (invoke tsnap apply <uid>). </uid>
+ProviderEdgeTest::testApplyFailureBubbles (simulate provider process error returns non-zero → exit code 5).
+JSON parity test: verify command field ‘snapshot.apply’, payload fields present, no extraneous keys.
+All existing suites must remain green.
+Acceptance Criteria
+Command visible in help (group: Snapshot) with examples.
+Alias apply works unless overridden in config.
+Applying valid snapshot returns success with correct bytes count (>= file size sum of used files).
+Compressed backup applied transparently.
+No memory spike (streamed read).
+Correct exit codes for ambiguity, not found, failure.
+README updated.
+All tests pass.
+Edge Cases
+Missing backup file -> ProcessFailedException (exit 5).
+Both backup.sql and backup.sql.gz exist (prefer .sql.gz).
+Gzip unavailable and only .gz present (fail gracefully with clear message).
+Empty backup file (0 bytes) still treated as success (bytes_applied=0).
+Race: snapshot directory deleted after resolution -> treat as not found (exit 2).
+Rollback Strategy
+Revert commit; no schema changes. Users can still manually apply dumps.
+Risks & Mitigations
+Risk: Provider mismatch (future multi-type). Mitigation: enforce snapshot_type check.
+Risk: Large dump memory usage. Mitigation: stream chunked reads (8K) and pipe to process_runner.
+Risk: Partial restore on failure. Mitigation: surface clear error; transactional DB recovery out-of-scope.
+Follow-Up Tasks (Not In Scope)
+Support multi-type (filesystems, mixed components).
+Apply progress reporting.
+Pre-apply integrity verification.
+Dry-run mode.
+Time Estimate
+M (medium) – new command + interface method + tests.
+Deliverables
+New command + provider apply integration
+Updated providers
+Tests (CLI + provider edge cases)
+README updated
+Passing test suite
+Agent Execution Checklist
+<input></input> Restate ticket
+<input></input> Identify target files
+<input></input> Read & plan edits
+<input></input> Implement interface & provider apply()
+<input></input> Add dump_apply_result
+<input></input> Add snapshot_apply command
+<input></input> Register command + alias
+<input></input> Write tests (success, compressed, ambiguous, not found, alias, failure)
+<input></input> Update README
+<input></input> Run full PHPUnit
+<input></input> Iterate until green
+<input></input> Commit (T16A feat(snapshot): add snapshot apply command)
+End of Ticket T16A.
+
+
  ===================================================Ticket ID: T15B Title: Snapshot Module Refactor (Separation of Concerns) Objective: Refactor snapshot subsystem for readability & maintainability by extracting creation, resolution, and deletion responsibilities into dedicated classes without altering observable behavior.
 Context: snapshot_manager currently combines:
 Creation workflow (dump provider selection, manifest writing, index updating)

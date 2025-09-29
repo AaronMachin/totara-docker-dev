@@ -40,9 +40,14 @@ class share_http_server {
 
     private function handle($conn): void {
         stream_set_timeout($conn,3);
-        $reqLine = '';
-        while(!str_contains($reqLine,"\r\n")){
-            $chunk = fread($conn,1024); if($chunk===false||$chunk===''){ break; } $reqLine.=$chunk; if(strlen($reqLine)>4096){ break; }
+        $reqLine='';
+        $deadline = microtime(true)+0.6; // allow up to 600ms for client to send initial line
+        while(!str_contains($reqLine,"\r\n") && microtime(true) < $deadline){
+            $chunk = fread($conn,1024);
+            if($chunk===false){ usleep(10000); continue; }
+            if($chunk===''){ usleep(10000); continue; }
+            $reqLine.=$chunk;
+            if(strlen($reqLine)>8192){ break; }
         }
         $first = strtok($reqLine,"\r\n");
         if(!$first){ $this->respond($conn,400,'bad request'); return; }
